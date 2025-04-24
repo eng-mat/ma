@@ -20,3 +20,38 @@
 
 
 gcloud projects set-iam-policy PROJECT_ID enable-audit-logging-policy.json
+
+
+
+
+gcloud projects get-iam-policy PROJECT_ID --format=json > current-policy.json
+
+
+
+
+
+{
+  "bindings": [
+    {
+      "role": "roles/viewer",
+      "members": [
+        "user:example-user@example.com"
+      ]
+    }
+  ],
+  "etag": "BwWWja0YfJA=",
+  "version": 1
+}
+
+
+
+
+
+gcloud projects set-iam-policy PROJECT_ID current-policy.json
+
+gcloud projects add-iam-policy-binding PROJECT_ID \
+  --member="user:EMAIL_ADDRESS" \
+  --role="roles/resourcemanager.projectIamAdmin"
+
+
+
