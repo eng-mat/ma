@@ -1,3 +1,9 @@
+# how to run
+# chmod +x create_vertexai_workbench.sh
+# ./create_vertexai_workbench.sh
+
+
+
 #!/bin/bash
 
 # ========== USER INPUT ==========
