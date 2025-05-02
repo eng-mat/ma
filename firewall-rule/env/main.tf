@@ -1,7 +1,7 @@
 module "firewall_rules" {
   for_each = var.firewall_rules
 
-  source = "./modules/firewall_rule"
+  source = "../modules"
 
   project_id         = each.value.project_id
   network            = each.value.network
