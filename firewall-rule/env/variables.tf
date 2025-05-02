@@ -18,7 +18,7 @@ variable "firewall_rules" {
     }))
     source_ranges      = list(string)
     destination_ranges = list(string)
-    target_tags        = list(string)
+ #   target_tags        = list(string)
     description        = string
   }))
 }
