@@ -18,6 +18,8 @@ resource "google_compute_firewall" "this" {
   source_ranges      = var.source_ranges
   destination_ranges = var.destination_ranges
  # target_tags        = var.target_tags
-  enable_logging     = true
+  log_config {
+    metadata = "EXCLUDE_ALL_METADATA"
+  }
   description        = var.description
 }
