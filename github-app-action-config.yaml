@@ -33,3 +33,6 @@ jobs:
 
       - name: Terraform Plan
         run: terraform plan
+
+
+gh api /app/installations --header "Authorization: Bearer <JWT>" --header "Accept: application/vnd.github+json"
