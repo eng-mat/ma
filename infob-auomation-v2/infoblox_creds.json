@@ -1,0 +1,6 @@
+{
+    "IB_API_URL": "your_infoblox_api_url",
+    "IB_API_USERNAME": "your_infoblox_username",
+    "IB_API_PASSWORD": "your_infoblox_password",
+    "IB_VERIFY_SSL": "true"
+  }

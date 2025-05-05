@@ -1,0 +1,125 @@
+name: Delete GCP CIDR Reservation in Infoblox
+
+on:
+  workflow_dispatch:
+    inputs:
+      network_view:
+        description: "Infoblox Network View"
+        type: string
+        required: true
+        options:
+          - gcp-my-nonroutable-nonprod
+          - gcp-my-nonroutable-prod
+          - gcp-my-hub
+          - gcp-you-nonroutable
+          - gcp-you-hub
+          - gcp-myyou-nonroutable-nonprod
+          - gcp-myyou-nonroutable-prod
+          - gcp-myyou-prod
+      cidr_to_delete:
+        description: "CIDR to delete (e.g., 10.20.30.0/26)"
+        type: string
+        required: true
+      subnet_name:
+        description: "Name of the subnet (comment in Infoblox)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write  # Required for WIF
+
+jobs:
+  delete_ip:
+    name: Delete IP in Infoblox
+    runs-on: ubuntu-latest  # Or your custom runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Authenticate to GCP via WIF
+        id: gcp_auth
+        uses: google-github-actions/auth@v1
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - name: Retrieve Infoblox API Credentials from Secret Manager
+        id: get_infoblox_creds
+        run: |
+          python get_infoblox_secrets.py ${{ secrets.GCP_PROJECT_ID }} ${{ secrets.INFOBLOX_SECRET_NAME }} > infoblox_creds.json
+          echo "INFOBLOX_CREDS=$(cat infoblox_creds.json)" >> $GITHUB_ENV
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.gcp_auth.outputs.credentials_file_path }}
+
+      - name: Run Infoblox deletion script
+        id: delete
+        run: |
+          python infoblox_ipam.py delete \
+            --network-view "${{ github.event.inputs.network_view }}" \
+            --cidr "${{ github.event.inputs.cidr_to_delete }}" \
+            --name "${{ github.event.inputs.subnet_name }}" \
+            --creds-file infoblox_creds.json
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }} # If your script needs this
+        shell: bash
+
+      - name: Output Deletion Status
+        if: success() && steps.delete.outcome == 'success'
+        run: echo "Successfully deleted reservation."
+
+      - name: Output Error Message
+        if: failure() || steps.delete.outcome == 'failure'
+        run: echo "Error deleting IP: $(cat error.txt)"
+
+      - name: Manual Approval
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Review and Approve CIDR Deletion: ${{ github.event.inputs.cidr_to_delete }}`,
+              body: `A request to delete the CIDR reservation ${{ github.event.inputs.cidr_to_delete }} with name "${{ github.event.inputs.subnet_name }}" in Network View "${{ github.event.inputs.network_view }}" requires your approval.\n\nApprove this deletion by commenting "APPROVED".`,
+            });
+            core.setOutput('issue_number', issue.data.number);
+
+      - name: Wait for Approval
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue_number = core.outputs.issue_number;
+            const maxWaitTime = 3600; // 1 hour in seconds
+            const startTime = Date.now();
+
+            while (Date.now() - startTime < maxWaitTime * 1000) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+              });
+
+              if (comments.some(comment => comment.body.toUpperCase().includes('APPROVED'))) {
+                core.info('Approval received.');
+                return;
+              }
+
+              await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds
+            }
+
+            core.setFailed('Approval timeout.');
+
+      - name: Perform Post-Deletion Tasks (Optional)
+        if: success() && steps.delete.outcome == 'success'
+        run: echo "Placeholder for any post-deletion tasks."
