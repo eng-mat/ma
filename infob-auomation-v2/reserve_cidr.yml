@@ -7,132 +7,115 @@ on:
         description: "Infoblox Network View"
         type: string
         required: true
-        options:
-          - gcp-my-nonroutable-nonprod
-          - gcp-my-nonroutable-prod
-          - gcp-my-hub
-          - gcp-you-nonroutable
-          - gcp-you-hub
-          - gcp-myyou-nonroutable-nonprod
-          - gcp-myyou-nonroutable-prod
-          - gcp-myyou-prod
       supernet_cidr:
-        description: "Supernet CIDR to reserve from (e.g., 10.10.10.0/18)"
+        description: "Supernet CIDR to reserve from (e.g., 10.0.0.0/16)"
         type: string
         required: true
       cidr_prefix:
-        description: "Desired CIDR prefix length (e.g., 26)"
-        type: number
+        description: "CIDR Prefix Length (e.g., 24)"
+        type: integer
         required: true
       subnet_name:
-        description: "Name of the subnet (will be used as comment in Infoblox)"
+        description: "Subnet Name (Descriptive name for the subnet)"
         type: string
         required: true
 
-permissions:
-  contents: read
-  id-token: write  # Required for Workload Identity Federation
-
 jobs:
-  reserve_ip:
-    name: Reserve IP in Infoblox
-    runs-on: ubuntu-latest  # Or your custom runner with necessary tools
-
+  reserve:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
-
+          python-version: "3.10"
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Authenticate to GCP via WIF
-        id: gcp_auth
-        uses: google-github-actions/auth@v1
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
           service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
-
-      - name: Retrieve Infoblox API Credentials from Secret Manager
-        id: get_infoblox_creds
-        run: |
-          python get_infoblox_secrets.py ${{ secrets.GCP_PROJECT_ID }} ${{ secrets.INFOBLOX_SECRET_NAME }} > infoblox_creds.json
-          echo "INFOBLOX_CREDS=$(cat infoblox_creds.json)" >> $GITHUB_ENV
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - name: Get Infoblox Credentials
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.gcp_auth.outputs.credentials_file_path }}
-
-      - name: Run Infoblox reservation script
-        id: reserve
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          INFOBLOX_SECRET_NAME: ${{ secrets.INFOBLOX_SECRET_NAME }}
+        run: python get_infoblox_secrets.py
+      - name: Reserve CIDR in Infoblox
+        id: reserve_cidr
         run: |
           python infoblox_ipam.py reserve \
-            --network-view "${{ github.event.inputs.network_view }}" \
-            --supernet "${{ github.event.inputs.supernet_cidr }}" \
-            --prefix "${{ github.event.inputs.cidr_prefix }}" \
-            --name "${{ github.event.inputs.subnet_name }}" \
-            --creds-file infoblox_creds.json
-        env:
-          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }} # If your script needs this
-        shell: bash
-
+            "${{ github.event.inputs.network_view }}" \
+            "${{ github.event.inputs.supernet_cidr }}" \
+            "${{ github.event.inputs.cidr_prefix }}" \
+            "${{ github.event.inputs.subnet_name }}"
       - name: Output Reserved CIDR
-        if: success() && steps.reserve.outcome == 'success'
-        id: output_cidr
-        run: echo "RESERVED_CIDR=$(cat reserved_cidr.txt)"
-
+        if: steps.reserve_cidr.outcome == 'success'
+        run: |
+          echo "Reserved CIDR: $(cat reserved_cidr.txt)"
+          echo "Supernet CIDR: $(cat supernet_cidr.txt)"
+          echo "Subnet Name: $(cat subnet_name.txt)"
+          if [ -f "supernet_utilization.txt" ]; then
+            echo "Supernet Utilization: $(cat supernet_utilization.txt)"
+          fi
       - name: Output Error Message
-        if: failure() || steps.reserve.outcome == 'failure'
-        run: echo "Error reserving IP: $(cat error.txt)"
-
-      - name: Manual Approval
+        if: steps.reserve_cidr.outcome == 'failure'
+        run: |
+          echo "Error: $(cat error.txt)"
+      - name: Create Approval Issue
         uses: actions/github-script@v7
-        if: success() && steps.reserve.outcome == 'success'
+        if: steps.reserve_cidr.outcome == 'success'
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.create({
+            const output = `Reserved CIDR: $(cat reserved_cidr.txt)
+Supernet CIDR: $(cat supernet_cidr.txt)
+Subnet Name: $(cat subnet_name.txt)
+            `;
+            let issueBody = output;
+            if (fs.existsSync('supernet_utilization.txt')) {
+              issueBody += `
+Supernet Utilization: $(cat supernet_utilization.txt)`;
+            }
+            issueBody += `
+Please approve the CIDR reservation in Infoblox.  Comment "APPROVED" to proceed.`;
+
+            const issueTitle = `Infoblox CIDR Reservation Request: $(cat reserved_cidr.txt)`;
+            const newIssue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Review and Approve CIDR Reservation: ${{ steps.output_cidr.outputs.RESERVED_CIDR }}`,
-              body: `A request to reserve CIDR ${{ steps.output_cidr.outputs.RESERVED_CIDR }} with name "${{ github.event.inputs.subnet_name }}" in Network View "${{ github.event.inputs.network_view }}" from supernet "${{ github.event.inputs.supernet_cidr }}" requires your approval to proceed with subnet creation in GCP.\n\nApprove this request by commenting "APPROVED".`,
+              title: issueTitle,
+              body: issueBody,
             });
-            core.setOutput('issue_number', issue.data.number);
-
+            core.setOutput("issue_number", newIssue.data.number);
       - name: Wait for Approval
         uses: actions/github-script@v7
-        if: success() && steps.reserve.outcome == 'success'
+        if: steps.reserve_cidr.outcome == 'success'
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue_number = core.outputs.issue_number;
-            const maxWaitTime = 3600; // 1 hour in seconds
-            const startTime = Date.now();
-
-            while (Date.now() - startTime < maxWaitTime * 1000) {
-              const { data: comments } = await github.rest.issues.listComments({
+            const issueNumber = core.getOutput("issue_number");
+            console.log(`Waiting for approval on issue #${issueNumber}...`);
+            let approved = false;
+            for (let i = 0; i < 12; i++) { // Check for approval for up to 1 hour (12 * 5 minutes)
+              const comments = await github.rest.issues.listComments({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: issue_number,
+                issue_number: issueNumber,
               });
-
-              if (comments.some(comment => comment.body.toUpperCase().includes('APPROVED'))) {
-                core.info('Approval received.');
-                return;
+              for (const comment of comments.data) {
+                if (comment.body.toUpperCase().includes("APPROVED")) {
+                  approved = true;
+                  console.log("Approval received!");
+                  break;
+                }
               }
-
-              await new Promise(resolve => setTimeout(resolve, 30000)); // Wait 30 seconds
+              if (approved) break;
+              await new Promise(resolve => setTimeout(resolve, 300000)); // Wait 5 minutes
             }
-
-            core.setFailed('Approval timeout.');
-
-      - name: Proceed with GCP Subnet Creation
-        if: success() && steps.reserve.outcome == 'success'
-        run: |
-          echo "Reserved CIDR for GCP subnet creation: ${{ steps.output_cidr.outputs.RESERVED_CIDR }}"
-          echo "Subnet Name: ${{ github.event.inputs.subnet_name }}"
-          # Integrate your existing GCP subnet creation workflow here
-          # You can use ${{ steps.output_cidr.outputs.RESERVED_CIDR }} and ${{ github.event.inputs.subnet_name }}
-          echo "Placeholder for your GCP subnet creation logic..."
+            if (!approved) {
+              core.setFailed(`Timed out waiting for approval on issue #${issueNumber}`);
+            }
