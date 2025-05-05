@@ -1,0 +1,38 @@
+jobs:
+  terraform-plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v3
+
+      - name: Generate GitHub App Token
+        id: generate_token
+        uses: tibdex/github-app-token@v1
+        with:
+          app_id: ${{ secrets.GH_APP_ID }}
+          installation_id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          private_key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - name: Checkout Terraform Modules (Internal Repo)
+        uses: actions/checkout@v3
+        with:
+          repository: your-org/internal-terraform-modules
+          token: ${{ steps.generate_token.outputs.token }}
+          path: modules/internal
+
+      # Continue with your Terraform steps
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan
+
+
+gh api /app/installations --header "Authorization: Bearer <JWT>" --header "Accept: application/vnd.github+json"
