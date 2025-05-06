@@ -75,3 +75,25 @@ jobs:
             --cidr "${{ inputs.cidr_size }}" \
             --subnet_name "${{ inputs.subnet_name }}" \
             ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
+
+
+
+
+- name: Load Infoblox Credentials from Secret Manager
+  run: |
+    echo "INFOBLOX_USER=$(gcloud secrets versions access latest --secret=infoblox-username --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
+    echo "INFOBLOX_PASS=$(gcloud secrets versions access latest --secret=infoblox-password --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
+
+- name: Run Infoblox Reservation
+  env:
+    INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
+    INFOBLOX_USER: ${{ env.INFOBLOX_USER }}
+    INFOBLOX_PASS: ${{ env.INFOBLOX_PASS }}
+  run: |
+    python infoblox_ipam.py --action reserve \
+      --network_view "${{ inputs.network_view }}" \
+      --supernet "${{ inputs.supernet_choice }}" \
+      --cidr "${{ inputs.cidr_size }}" \
+      --subnet_name "${{ inputs.subnet_name }}" \
+      ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
+
