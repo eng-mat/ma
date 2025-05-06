@@ -12,3 +12,15 @@ curl -k -u "user:pass" \
     "network": "func:nextavailablenetwork:18.12.8.6/16,26"
   }' \
   "https://infoblox.example.com/wapi/v2.10/network"
+
+
+
+
+curl -k -u "user:pass" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{
+    "network_view": "gcp-my-hub",
+    "network": "func:nextavailablenetwork:18.12.8.6/16,28"
+  }' \
+  "https://blox-lab.example.com/wapi/v2.10/network"
