@@ -8,25 +8,23 @@ on:
         required: true
         type: choice
         options:
-          - gcp-my-nonroutable-nonprod
-          - gcp-my-nonroutable-prod
           - gcp-my-hub
-          - gcp-you-nonroutable
           - gcp-you-hub
-          - gcp-myyou-nonroutable-nonprod
-          - gcp-myyou-nonroutable-prod
-          - gcp-myyou-prod
-      supernet:
-        description: "Supernet CIDR (e.g., 10.10.10.10/18)"
+      supernet_choice:
+        description: "Choose Supernet (CIDR + label)"
         required: true
+        type: choice
+        options:
+          - 10.10.10.2/12 Test-supernet
+          - 20.20.20.3/12 nontest-supernet
       cidr_size:
-        description: "CIDR Size (/26, /27, etc.)"
+        description: "CIDR Size (e.g., /26)"
         required: true
       subnet_name:
         description: "Subnet Name"
         required: true
       dry_run:
-        description: "Dry-run (true=no actual reservation)"
+        description: "Dry-run? (no actual change)"
         required: true
         default: "true"
         type: choice
@@ -62,23 +60,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
+      - name: Install Python Requirements
+        run: pip install -r requirements.txt
 
-      - name: Fetch Infoblox Credentials
-        run: |
-          echo "INFOBLOX_USER=$(gcloud secrets versions access latest --secret=infoblox-username --quiet)" >> $GITHUB_ENV
-          echo "INFOBLOX_PASS=$(gcloud secrets versions access latest --secret=infoblox-password --quiet)" >> $GITHUB_ENV
-
-      - name: Execute IP Reservation
+      - name: Run Infoblox Reservation
         env:
-          INFOBLOX_USER: ${{ env.INFOBLOX_USER }}
-          INFOBLOX_PASS: ${{ env.INFOBLOX_PASS }}
+          INFOBLOX_USER: ${{ secrets.INFOBLOX_USER }}
+          INFOBLOX_PASS: ${{ secrets.INFOBLOX_PASS }}
+          INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
         run: |
           python infoblox_ipam.py --action reserve \
             --network_view "${{ inputs.network_view }}" \
-            --supernet "${{ inputs.supernet }}" \
+            --supernet "${{ inputs.supernet_choice }}" \
             --cidr "${{ inputs.cidr_size }}" \
             --subnet_name "${{ inputs.subnet_name }}" \
             ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
