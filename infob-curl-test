@@ -1,0 +1,2 @@
+curl -k -u "username:password" \
+  "https://infoblox.example.com/wapi/v2.10/networkcontainer?network=18.12.8.6/16&network_view=gcp-my-hub"
