@@ -11,7 +11,7 @@ on:
           - gcp-my-hub
           - gcp-you-hub
       supernet_choice:
-        description: "Choose Supernet (CIDR + label)"
+        description: "Choose Supernet (CIDR + Label)"
         required: true
         type: choice
         options:
@@ -24,7 +24,7 @@ on:
         description: "Subnet Name"
         required: true
       dry_run:
-        description: "Dry-run? (no actual change)"
+        description: "Dry-run? (true = no changes)"
         required: true
         default: "true"
         type: choice
@@ -51,7 +51,7 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v1
 
-      - name: Configure gcloud
+      - name: Set GCP Project
         run: |
           gcloud config set auth/impersonate_service_account ${{ secrets.GCP_AUTOMATION_ACCOUNT }}
           gcloud config set project ${{ vars.AUTOMATION_PROJECT_ID }}
@@ -60,14 +60,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Python Requirements
+      - name: Install Dependencies
         run: pip install -r requirements.txt
+
+      - name: Load Infoblox Credentials from Secret Manager
+        run: |
+          echo "INFOBLOX_USER=$(gcloud secrets versions access latest --secret=infoblox-username --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
+          echo "INFOBLOX_PASS=$(gcloud secrets versions access latest --secret=infoblox-password --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
 
       - name: Run Infoblox Reservation
         env:
-          INFOBLOX_USER: ${{ secrets.INFOBLOX_USER }}
-          INFOBLOX_PASS: ${{ secrets.INFOBLOX_PASS }}
           INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
+          INFOBLOX_USER: ${{ env.INFOBLOX_USER }}
+          INFOBLOX_PASS: ${{ env.INFOBLOX_PASS }}
         run: |
           python infoblox_ipam.py --action reserve \
             --network_view "${{ inputs.network_view }}" \
@@ -75,25 +80,3 @@ jobs:
             --cidr "${{ inputs.cidr_size }}" \
             --subnet_name "${{ inputs.subnet_name }}" \
             ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
-
-
-
-
-- name: Load Infoblox Credentials from Secret Manager
-  run: |
-    echo "INFOBLOX_USER=$(gcloud secrets versions access latest --secret=infoblox-username --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
-    echo "INFOBLOX_PASS=$(gcloud secrets versions access latest --secret=infoblox-password --project=${{ vars.AUTOMATION_PROJECT_ID }} --quiet)" >> $GITHUB_ENV
-
-- name: Run Infoblox Reservation
-  env:
-    INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
-    INFOBLOX_USER: ${{ env.INFOBLOX_USER }}
-    INFOBLOX_PASS: ${{ env.INFOBLOX_PASS }}
-  run: |
-    python infoblox_ipam.py --action reserve \
-      --network_view "${{ inputs.network_view }}" \
-      --supernet "${{ inputs.supernet_choice }}" \
-      --cidr "${{ inputs.cidr_size }}" \
-      --subnet_name "${{ inputs.subnet_name }}" \
-      ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
-
