@@ -13,14 +13,16 @@ USERNAME = os.getenv('INFOBLOX_USER')
 PASSWORD = os.getenv('INFOBLOX_PASS')
 
 def extract_cidr(supernet_input):
-    """Extracts CIDR from a combined selection like '10.10.10.2/12 Test-supernet'"""
-    return supernet_input.split()[0].strip()
+    """Extracts CIDR from input like '10.10.10.2/12 Test-supernet'."""
+    if not supernet_input or len(supernet_input.strip().split()) < 1:
+        raise ValueError("❌ Invalid or missing supernet input. Expected format: 'CIDR Label'")
+    return supernet_input.strip().split()[0]
 
 def reserve_ip(network_view, supernet, cidr, subnet_name, dry_run):
-    logging.info(f"Starting reservation for view={network_view}, supernet={supernet}, cidr={cidr}, subnet={subnet_name}, dry-run={dry_run}")
+    logging.info(f"📦 Starting reservation | View: {network_view} | Supernet: {supernet} | CIDR: {cidr} | Name: {subnet_name} | Dry-run: {dry_run}")
 
     if dry_run:
-        logging.info("[DRY-RUN] No reservation made.")
+        logging.info("🧪 DRY-RUN mode enabled. No actual reservation made.")
         return
 
     payload = {
@@ -30,45 +32,38 @@ def reserve_ip(network_view, supernet, cidr, subnet_name, dry_run):
         "extattrs": {"SiteCode": {"value": "GCP"}}
     }
 
-    logging.info(f"Payload sent: {payload}")
-
     response = requests.post(f"{INFOBLOX_URL}/network", json=payload, auth=(USERNAME, PASSWORD), verify=False)
-    logging.info(f"Infoblox response status: {response.status_code}")
+    logging.info(f"🔁 Infoblox Response Code: {response.status_code}")
 
     if response.status_code != 201:
-        logging.error(f"Reservation failed: {response.text}")
+        logging.error(f"❌ Reservation failed: {response.text}")
         raise Exception(f"Reservation failed: {response.text}")
 
-    network_result = response.json()
-    logging.info(f"✅ Reserved CIDR: {network_result['network']}")
+    result = response.json()
+    logging.info(f"✅ Reserved CIDR: {result['network']}")
 
 def delete_reservation(network_view, cidr, subnet_name, dry_run):
-    logging.info(f"Starting deletion for view={network_view}, cidr={cidr}, subnet={subnet_name}, dry-run={dry_run}")
+    logging.info(f"🗑️ Starting deletion | View: {network_view} | CIDR: {cidr} | Name: {subnet_name} | Dry-run: {dry_run}")
 
     if dry_run:
-        logging.info("[DRY-RUN] No deletion made.")
+        logging.info("🧪 DRY-RUN mode enabled. No actual deletion made.")
         return
 
-    params = {"network_view": network_view, "network": cidr, "comment": subnet_name}
-    response = requests.get(f"{INFOBLOX_URL}/network", params=params, auth=(USERNAME, PASSWORD), verify=False)
-
-    logging.info(f"Search response status: {response.status_code}")
+    query = {"network_view": network_view, "network": cidr, "comment": subnet_name}
+    response = requests.get(f"{INFOBLOX_URL}/network", params=query, auth=(USERNAME, PASSWORD), verify=False)
 
     if response.status_code != 200 or not response.json():
-        logging.error(f"Reservation not found: {response.text}")
+        logging.error(f"❌ Reservation not found: {response.text}")
         raise Exception(f"Reservation not found: {response.text}")
 
     network_ref = response.json()[0]['_ref']
-    logging.info(f"Deleting network ref: {network_ref}")
-
     del_response = requests.delete(f"{INFOBLOX_URL}/{network_ref}", auth=(USERNAME, PASSWORD), verify=False)
-    logging.info(f"Deletion response status: {del_response.status_code}")
 
     if del_response.status_code != 200:
-        logging.error(f"Deletion failed: {del_response.text}")
+        logging.error(f"❌ Deletion failed: {del_response.text}")
         raise Exception(f"Deletion failed: {del_response.text}")
 
-    logging.info(f"🗑️ Successfully deleted reservation: {cidr}")
+    logging.info(f"✅ Successfully deleted CIDR: {cidr}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Infoblox IPAM Automation")
