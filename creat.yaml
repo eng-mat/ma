@@ -1,0 +1,84 @@
+name: Infoblox CIDR Reservation
+
+on:
+  workflow_dispatch:
+    inputs:
+      network_view:
+        description: "Select Infoblox Network View"
+        required: true
+        type: choice
+        options:
+          - gcp-my-nonroutable-nonprod
+          - gcp-my-nonroutable-prod
+          - gcp-my-hub
+          - gcp-you-nonroutable
+          - gcp-you-hub
+          - gcp-myyou-nonroutable-nonprod
+          - gcp-myyou-nonroutable-prod
+          - gcp-myyou-prod
+      supernet:
+        description: "Supernet CIDR (e.g., 10.10.10.10/18)"
+        required: true
+      cidr_size:
+        description: "CIDR Size (/26, /27, etc.)"
+        required: true
+      subnet_name:
+        description: "Subnet Name"
+        required: true
+      dry_run:
+        description: "Dry-run (true=no actual reservation)"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  reserve-ip:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure gcloud
+        run: |
+          gcloud config set auth/impersonate_service_account ${{ secrets.GCP_AUTOMATION_ACCOUNT }}
+          gcloud config set project ${{ vars.AUTOMATION_PROJECT_ID }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Fetch Infoblox Credentials
+        run: |
+          echo "INFOBLOX_USER=$(gcloud secrets versions access latest --secret=infoblox-username --quiet)" >> $GITHUB_ENV
+          echo "INFOBLOX_PASS=$(gcloud secrets versions access latest --secret=infoblox-password --quiet)" >> $GITHUB_ENV
+
+      - name: Execute IP Reservation
+        env:
+          INFOBLOX_USER: ${{ env.INFOBLOX_USER }}
+          INFOBLOX_PASS: ${{ env.INFOBLOX_PASS }}
+        run: |
+          python infoblox_ipam.py --action reserve \
+            --network_view "${{ inputs.network_view }}" \
+            --supernet "${{ inputs.supernet }}" \
+            --cidr "${{ inputs.cidr_size }}" \
+            --subnet_name "${{ inputs.subnet_name }}" \
+            ${{ inputs.dry_run == 'true' && '--dry_run' || '' }}
