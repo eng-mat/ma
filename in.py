@@ -8,9 +8,13 @@ urllib3.disable_warnings()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s]: %(message)s')
 
-INFOBLOX_URL = "https://infoblox.example.com/wapi/v2.10"
+INFOBLOX_URL = os.getenv('INFOBLOX_URL')
 USERNAME = os.getenv('INFOBLOX_USER')
 PASSWORD = os.getenv('INFOBLOX_PASS')
+
+def extract_cidr(supernet_input):
+    """Extracts CIDR from a combined selection like '10.10.10.2/12 Test-supernet'"""
+    return supernet_input.split()[0].strip()
 
 def reserve_ip(network_view, supernet, cidr, subnet_name, dry_run):
     logging.info(f"Starting reservation for view={network_view}, supernet={supernet}, cidr={cidr}, subnet={subnet_name}, dry-run={dry_run}")
@@ -70,14 +74,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Infoblox IPAM Automation")
     parser.add_argument("--action", required=True, choices=["reserve", "delete"])
     parser.add_argument("--network_view", required=True)
-    parser.add_argument("--supernet")
-    parser.add_argument("--cidr")
+    parser.add_argument("--supernet", required=False)
+    parser.add_argument("--cidr", required=False)
     parser.add_argument("--subnet_name", required=True)
     parser.add_argument("--dry_run", action="store_true")
 
     args = parser.parse_args()
 
     if args.action == "reserve":
-        reserve_ip(args.network_view, args.supernet, args.cidr, args.subnet_name, args.dry_run)
+        parsed_supernet = extract_cidr(args.supernet)
+        reserve_ip(args.network_view, parsed_supernet, args.cidr, args.subnet_name, args.dry_run)
     elif args.action == "delete":
         delete_reservation(args.network_view, args.cidr, args.subnet_name, args.dry_run)
