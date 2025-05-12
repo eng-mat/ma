@@ -1,0 +1,89 @@
+gcloud notebooks instances create <INSTANCE_NAME> \
+    --location=<LOCATION> \
+    --vm-machine-type=<MACHINE_TYPE> \
+    --vm-container-image-repository="us-docker.pkg.dev/deeplearning-platform-release/gcr.io/deeplearning-platform/notebooks" \
+    --vm-container-image-tag="latest" \
+    --vm-enable-secure-boot \
+    --vm-service-account=<SERVICE_ACCOUNT_EMAIL> \
+    --vm-network=<NETWORK_NAME> \
+    --vm-subnetwork=<SUBNETWORK_NAME> \
+    --vm-disable-public-ip \
+    --encryption-policy-type=CMEK \
+    --encryption-policy-kms-key="projects/<PROJECT_ID>/locations/<REGION>/keyRings/<KEY_RING_NAME>/cryptoKeys/<KMS_KEY_NAME>" \
+    --upgrade-schedule-type=WEEKLY \
+    --upgrade-schedule-cron="0 4 * * 0" \
+    --idle-shutdown-enabled \
+    --idle-shutdown-timeout=1440 \
+    --user-email=<USER_EMAIL>
+
+
+
+
+
+
+
+gcloud notebooks instances create INSTANCE_NAME \
+  --location=REGION \
+  --vm-image-project=deeplearning-platform-release \
+  --vm-image-family=common-cpu \
+  --machine-type=n1-standard-4 \
+  --boot-disk-type=pd-standard \
+  --boot-disk-size=150 \
+  --boot-disk-kms-key=projects/PROJECT_ID/locations/REGION/keyRings/KEY_RING/cryptoKeys/KEY_NAME \
+  --data-disk-type=pd-ssd \
+  --data-disk-size=100 \
+  --data-disk-kms-key=projects/PROJECT_ID/locations/REGION/keyRings/KEY_RING/cryptoKeys/KEY_NAME \
+  --no-external-ip \
+  --no-enable-ip-forwarding \
+  --service-account=SERVICE_ACCOUNT_EMAIL \
+  --instance-owners=USER_EMAIL \
+  --network=projects/HOST_PROJECT_ID/global/networks/VPC_NAME \
+  --subnet=projects/HOST_PROJECT_ID/regions/REGION/subnetworks/SUBNET_NAME \
+  --maintenance-window-day=saturday \
+  --maintenance-window-hour=23 \
+  --maintenance-window-tz=America/New_York \
+  --shielded-secure-boot \
+  --shielded-vtpm \
+  --shielded-integrity-monitoring
+
+
+
+
+
+
+# === Final gcloud command based on your provided values ===
+
+# Replace these placeholders before running:
+# INSTANCE_NAME, REGION, SERVICE_ACCOUNT_EMAIL, USER_EMAIL, CMEK_KEY_PATH, SHARED_SUBNET_PATH
+
+gcloud notebooks instances create INSTANCE_NAME \
+  --location=REGION \
+  --vm-image-project=deeplearning-platform-release \
+  --vm-image-family=jupyter-lab-latest-cpu \
+  --machine-type=e2-standard-4 \
+  --boot-disk-type=pd-balanced \
+  --boot-disk-size=150 \
+  --boot-disk-kms-key=CMEK_KEY_PATH \
+  --data-disk-type=pd-ssd \
+  --data-disk-size=100 \
+  --data-disk-kms-key=CMEK_KEY_PATH \
+  --no-enable-ip-forwarding \
+  --no-external-ip \
+  --service-account=SERVICE_ACCOUNT_EMAIL \
+  --instance-owners=USER_EMAIL \
+  --subnet=SHARED_SUBNET_PATH \
+  --enable-proxy-access \
+  --vm-enable-vpc-network \
+  --vm-enable-health-monitoring \
+  --vm-health-monitoring-dns-enabled \
+  --enable-internal-ip-only \
+  --enable-nbconvert \
+  --enable-terminal-access \
+  --enable-root-access \
+  --idle-shutdown-timeout=180 \
+  --idle-shutdown \
+  --maintenance-window-day=saturday \
+  --maintenance-window-hour=23 \
+  --maintenance-window-tz=America/New_York \
+  --shielded-vtpm \
+  --shielded-integrity-monitoring
