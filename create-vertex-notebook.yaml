@@ -87,3 +87,40 @@ gcloud notebooks instances create INSTANCE_NAME \
   --maintenance-window-tz=America/New_York \
   --shielded-vtpm \
   --shielded-integrity-monitoring
+
+
+
+
+
+
+
+
+
+  gcloud notebooks instances create <INSTANCE_NAME> \
+    --location=<LOCATION> \
+    --vm-machine-type=e2-standard-4 \
+    --vm-container-image-repository="us-docker.pkg.dev/deeplearning-platform-release/gcr.io/dataproc-v1/jupyterlab" \
+    --vm-container-image-tag=latest \
+    --vm-enable-vtpm \
+    --vm-enable-integrity-monitoring \
+    --vm-disable-secure-boot \
+    --vm-service-account=<SERVICE_ACCOUNT_EMAIL> \
+    --vm-network=<NETWORK_NAME> \
+    --vm-subnetwork=<SUBNETWORK_NAME> \
+    --vm-enable-proxy-access \
+    --vm-disable-public-ip \
+    --encryption-policy-type=CMEK \
+    --encryption-policy-kms-key="projects/<PROJECT_ID>/locations/<REGION>/keyRings/<KEY_RING_NAME>/cryptoKeys/<KMS_KEY_NAME>" \
+    --upgrade-schedule-type=WEEKLY \
+    --upgrade-schedule-cron="0 4 * * 0" \
+    --idle-shutdown-enabled \
+    --idle-shutdown-timeout=180 \
+    --boot-disk-type=pd-balanced \
+    --boot-disk-size=150 \
+    --data-disk-type=pd-balanced \
+    --data-disk-size=100 \
+    --metadata=enable-root-access=true,jupyterlab-version=4 \
+    --user-email=<USER_EMAIL> \
+    --enable-reporting \
+    --report-system-health-and-dns
+
