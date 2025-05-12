@@ -1,0 +1,36 @@
+gcloud org-policies describe compute.restrictSharedVpcSubnetworks \
+  --project=SERVICE_PROJECT_ID \
+  --format=yaml > current-policy.yaml
+
+
+
+
+
+
+constraint: constraints/compute.restrictSharedVpcSubnetworks
+listPolicy:
+  allowedValues:
+    - projects/host-project-id/regions/us-central1/subnetworks/subnet-a
+    - projects/host-project-id/regions/us-central1/subnetworks/subnet-b
+
+gcloud org-policies set-policy restrict-shared-vpc-subnets.yaml
+
+
+
+# restrict-shared-vpc-subnets.yaml
+name: projects/SERVICE_PROJECT_ID/policies/compute.restrictSharedVpcSubnetworks
+spec:
+  rules:
+    - values:
+        allowedValues:
+          - projects/host-project-id/regions/us-central1/subnetworks/subnet-b
+          - projects/host-project-id/regions/us-central1/subnetworks/subnet-c   # new
+
+
+gcloud org-policies set-policy restrict-shared-vpc-subnets.yaml
+
+
+
+
+
+
