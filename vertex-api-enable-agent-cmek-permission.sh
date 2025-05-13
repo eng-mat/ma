@@ -233,8 +233,6 @@ done
 
 
 
-
-
 #!/bin/bash
 
 # Exit immediately if a command exits with a non-zero status
@@ -307,41 +305,15 @@ done
 # Retrieve the service project number
 SERVICE_PROJECT_NUMBER=$(gcloud projects describe "$SERVICE_PROJECT_ID" --format="value(projectNumber)")
 
-# Function to trigger service agent creation
-trigger_service_agent_creation() {
-  local api="$1"
+# Trigger service agent creation
+for api in "${APIS[@]}"; do
   echo "Triggering service agent creation for API: $api"
   gcloud beta services identity create --service="$api" --project="$SERVICE_PROJECT_ID" || true
-}
-
-# Function to wait for a service agent to become available
-wait_for_service_agent() {
-  local service_account_email="$1"
-  local retries=9
-  local wait_time=5
-
-  for ((i=1; i<=retries; i++)); do
-    if gcloud iam service-accounts list --filter="email:$service_account_email" --format="value(email)" | grep -q "$service_account_email"; then
-      echo "Service agent $service_account_email is now available."
-      return 0
-    else
-      echo "Waiting for service agent $service_account_email to become available... (Attempt $i/$retries)"
-      sleep "$wait_time"
-      wait_time=$((wait_time * 2))  # Exponential backoff
-    fi
-  done
-
-  echo "Service agent $service_account_email did not become available after waiting."
-  return 1
-}
-
-# Trigger and wait for service agents
-for api in "${APIS[@]}"; do
-  trigger_service_agent_creation "$api"
-  agent_template="${SERVICE_AGENTS[$api]}"
-  agent_email="${agent_template/PROJECT_NUMBER/$SERVICE_PROJECT_NUMBER}"
-  wait_for_service_agent "$agent_email"
 done
+
+# Wait for service agents to become available
+echo "Waiting for service agents to become available..."
+sleep 7
 
 # Assign roles to service agents for each CMEK key
 for location in "${LOCATIONS[@]}"; do
@@ -361,8 +333,3 @@ for location in "${LOCATIONS[@]}"; do
       --role="roles/cloudkms.cryptoKeyEncrypterDecrypter"
   done
 done
-
-
-
-
-
