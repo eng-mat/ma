@@ -36,6 +36,12 @@ APIS=(
   dlp.googleapis.com
 )
 
+# APIs that ONLY need to be enabled.  No further processing.
+ONLY_ENABLE_APIS=(
+  serviceusage.googleapis.com
+  generativelanguage.googleapis.com
+)
+
 # List of locations
 LOCATIONS=(
   us-west3
@@ -55,39 +61,68 @@ done
 # Retrieve the service project number
 SERVICE_PROJECT_NUMBER=$(gcloud projects describe "$SERVICE_PROJECT_ID" --format="value(projectNumber)")
 
+# Mapping of APIs to their corresponding service agents
+declare -A SERVICE_AGENTS=(
+  [dataflow.googleapis.com]="service-PROJECT_NUMBER@dataflow-service-producer-prod.iam.gserviceaccount.com"
+  [dataform.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com"
+  [aiplatform.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-aiplatform.iam.gserviceaccount.com"
+  [notebooks.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-notebooks.iam.gserviceaccount.com"
+  [dataproc.googleapis.com]="service-PROJECT_NUMBER@dataproc-accounts.iam.gserviceaccount.com"
+  [composer.googleapis.com]="service-PROJECT_NUMBER@composer-accounts.iam.gserviceaccount.com"
+  [dialogflow.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-dialogflow.iam.gserviceaccount.com"
+  [discoveryengine.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+  [dlp.googleapis.com]="service-PROJECT_NUMBER@gcp-sa-dlp.iam.gserviceaccount.com"
+)
+
+# Trigger service agent creation and assign roles for the remaining APIs
+for api in "${APIS[@]}"; do
+  # Check if the current API is in the list that only needs enabling
+  if ! contains "${ONLY_ENABLE_APIS[@]}" "$api"; then
+    echo "Processing API: $api (Agent creation and role assignment)"
+    # Trigger service agent creation
+    echo "Triggering service agent creation for API: $api"
+    gcloud beta services identity create --service="$api" --project="$SERVICE_PROJECT_ID" || true
+
+    # Wait for service agents to become available
+    echo "Waiting for service agent to become available..."
+    sleep 7
+  fi
+done
+
 # Assign roles to service agents for each CMEK key
 for location in "${LOCATIONS[@]}"; do
   KEY_RING="key-$location"
   KEY_NAME="key-${SERVICE_PROJECT_ID}-${location}"
 
-  # Construct the full resource name
-  RESOURCE="projects/$VAULT_PROJECT_ID/locations/$location/keyRings/$KEY_RING/cryptoKeys/$KEY_NAME"
+  for api in "${APIS[@]}"; do
+     if ! contains "${ONLY_ENABLE_APIS[@]}" "$api"; then
+      agent_template="${SERVICE_AGENTS[$api]}"
+      agent_email="${agent_template/PROJECT_NUMBER/$SERVICE_PROJECT_NUMBER}"
 
-  # List of service agents to grant access
-  SERVICE_AGENTS=(
-    "service-$SERVICE_PROJECT_NUMBER@dataflow-service-producer-prod.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-dataform.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-aiplatform.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-notebooks.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@dataproc-accounts.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@composer-accounts.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-serviceusage.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-generativelanguage.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-dialogflow.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-discoveryengine.iam.gserviceaccount.com"
-    "service-$SERVICE_PROJECT_NUMBER@gcp-sa-dlp.iam.gserviceaccount.com"
-  )
-
-  for agent in "${SERVICE_AGENTS[@]}"; do
-    echo "Granting roles/cloudkms.cryptoKeyEncrypterDecrypter to $agent on $RESOURCE"
-    gcloud kms keys add-iam-policy-binding "$KEY_NAME" \
-      --keyring="$KEY_RING" \
-      --location="$location" \
-      --project="$VAULT_PROJECT_ID" \
-      --member="serviceAccount:$agent" \
-      --role="roles/cloudkms.cryptoKeyEncrypterDecrypter"
+      echo "Granting roles/cloudkms.cryptoKeyEncrypterDecrypter to $agent_email on key $KEY_NAME in $location"
+      gcloud kms keys add-iam-policy-binding "$KEY_NAME" \
+        --keyring="$KEY_RING" \
+        --location="$location" \
+        --project="$VAULT_PROJECT_ID" \
+        --member="serviceAccount:$agent_email" \
+        --role="roles/cloudkms.cryptoKeyEncrypterDecrypter"
+    fi
   done
 done
+
+# Helper function to check if an element exists in an array
+contains() {
+  local element="$1"
+  shift
+  local array=("$@")
+
+  for item in "${array[@]}"; do
+    if [[ "$item" = "$element" ]]; then
+      return 0 # Found
+    fi
+  done
+  return 1 # Not found
+}
 
 
 
