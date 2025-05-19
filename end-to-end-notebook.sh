@@ -338,10 +338,10 @@ echo "✅ Vertex AI Workbench instance '$WORKBENCH_NAME' created successfully."
    ```bash
    #!/bin/bash
    # Add user to local-group-1
-   GROUP_NAME="local-group-1"
-   MEMBER="$1" # The service account email is passed as the first argument
-   echo "Adding $MEMBER to $GROUP_NAME"
-   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   GRP="local-group-1"
+   SA="$1" # The service account email is passed as the first argument
+   echo "Adding $SA to $GRP"
+   gcloud identity groups memberships add --group-email="$GRP" --member-email="$SA"
    ```
 
    **`local-group2.sh`:**
@@ -349,10 +349,10 @@ echo "✅ Vertex AI Workbench instance '$WORKBENCH_NAME' created successfully."
    ```bash
    #!/bin/bash
    # Add user to local-group-2
-   GROUP_NAME="local-group-2"
-   MEMBER="$1"
-   echo "Adding $MEMBER to $GROUP_NAME"
-   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   GRP="local-group-2"
+   SA="$1"
+   echo "Adding $SA to $GRP"
+   gcloud identity groups memberships add --group-email="$GRP" --member-email="$SA"
    ```
 
    **`local-group3.sh`:**
@@ -360,8 +360,8 @@ echo "✅ Vertex AI Workbench instance '$WORKBENCH_NAME' created successfully."
    ```bash
    #!/bin/bash
    # Add user to local-group-3
-   GROUP_NAME="local-group-3"
-   MEMBER="$1"
-   echo "Adding $MEMBER to $GROUP_NAME"
-   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   GRP="local-group-3"
+   SA="$1"
+   echo "Adding $SA to $GRP"
+   gcloud identity groups memberships add --group-email="$GRP" --member-email="$SA"
    ```
