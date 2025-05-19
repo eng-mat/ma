@@ -1,3 +1,104 @@
+**1. GitHub Actions Workflow (`.github/workflows/create_vertex_ai_workbench.yaml`):**
+
+```yaml
+name: Create Vertex AI Workbench Instance
+on:
+  workflow_dispatch:
+    inputs:
+      service_project:
+        description: "Service Project ID"
+        type: string
+        required: true
+      host_project:
+        description: "Host Project ID (HOST_PROJECT1, HOST_PROJECT2, HOST_PROJECT3)"
+        type: string
+        required: true
+      region:
+        description: "Region"
+        type: string
+        required: true
+      zone:
+        description: "Zone"
+        type: string
+        required: true
+      host_vpc:
+        description: "Host VPC Network Name"
+        type: string
+        required: true
+      subnet_name:
+        description: "Subnet Name"
+        type: string
+        required: true
+      workbench_name:
+        description: "Workbench Instance Name"
+        type: string
+        required: true
+      cmek_key:
+        description: >-
+          CMEK key (e.g.,
+          projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY)
+        type: string
+        required: true
+      machine_type:
+        description: "Machine type (e.g., e2-standard-4)"
+        type: string
+        required: true
+      owner_email:
+        description: "Owner User Email"
+        type: string
+        required: true
+      cloud_eng_group:
+        description: "Cloud Engineers Group Email"
+        type: string
+        required: true
+      customer_group_email:
+        description: "Customer Group Email"
+        type: string
+        required: true
+
+env:
+  PROJECT_ID: ${{ github.repository }} # The repository where this workflow is defined.
+
+jobs:
+  create-workbench-instance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}  # Use the secret
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Install gcloud components
+        run: |
+          gcloud components update --quiet
+          gcloud components install beta --quiet
+
+      - name: Execute script
+        run: |
+          chmod +x create_workbench.sh # Make script executable
+          ./create_workbench.sh \
+          "${{ github.event.inputs.service_project }}" \
+          "${{ github.event.inputs.host_project }}" \
+          "${{ github.event.inputs.region }}" \
+          "${{ github.event.inputs.zone }}" \
+          "${{ github.event.inputs.host_vpc }}" \
+          "${{ github.event.inputs.subnet_name }}" \
+          "${{ github.event.inputs.workbench_name }}" \
+          "${{ github.event.inputs.cmek_key }}" \
+          "${{ github.event.inputs.machine_type }}" \
+          "${{ github.event.inputs.owner_email }}" \
+          "${{ github.event.inputs.cloud_eng_group }}" \
+          "${{ github.event.inputs.customer_group_email }}"
+        shell: bash
+```
+
+**2. Main script (`create_workbench.sh` - to be placed in your home directory):**
+
+```bash
 #!/bin/bash
 
 # Exit immediately if a command exits with a non-zero status
@@ -30,7 +131,6 @@ NOTEBOOK_SERVICE_AGENT="service-$SERVICE_PROJECT_NUMBER@gcp-sa-notebooks.iam.gse
 SUBNET_RESOURCE="projects/$HOST_PROJECT/regions/$REGION/subnetworks/$SUBNET_NAME"
 FULL_NETWORK="projects/$HOST_PROJECT/global/networks/$HOST_VPC"
 ENVIRONMENT="nonprod" # Hardcoded, you might want to make this a user input
-
 # Vault project ID
 VAULT_PROJECT_ID="my-vault-$ENVIRONMENT"
 
@@ -64,6 +164,20 @@ LOCATIONS=(
   us-east2
 )
 
+# Function to check if an element exists in an array
+contains() {
+  local element="$1"
+  shift
+  local array=("$@")
+
+  for item in "${array[@]}"; do
+    if [[ "$item" = "$element" ]]; then
+      return 0 # Found
+    fi
+  done
+  return 1 # Not found
+}
+
 # Function to execute local group script
 execute_local_group_script() {
   local host_project="$1"
@@ -87,6 +201,7 @@ execute_local_group_script() {
       ;;
   esac
 }
+
 
 
 # Enable APIs in the service project
@@ -148,22 +263,6 @@ for location in "${LOCATIONS[@]}"; do
     fi
   done
 done
-
-# Helper function to check if an element exists in an array
-contains() {
-  local element="$1"
-  shift
-  local array=("$@")
-
-  for item in "${array[@]}"; do
-    if [[ "$item" = "$element" ]]; then
-      return 0 # Found
-    fi
-  done
-  return 1 # Not found
-}
-
-
 
 # ========== STEP 0: Add Notebook Service Agent to Local Group  ==========
 echo "Adding Notebook Service Agent to local group for HOST_PROJECT: $HOST_PROJECT"
@@ -230,3 +329,39 @@ gcloud beta notebooks instances create "$WORKBENCH_NAME" \
   --shielded-vtpm
 
 echo "✅ Vertex AI Workbench instance '$WORKBENCH_NAME' created successfully."
+```
+
+**3. Local Group Scripts (to be placed in your home directory):**
+
+   **`local-group1.sh`:**
+
+   ```bash
+   #!/bin/bash
+   # Add user to local-group-1
+   GROUP_NAME="local-group-1"
+   MEMBER="$1" # The service account email is passed as the first argument
+   echo "Adding $MEMBER to $GROUP_NAME"
+   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   ```
+
+   **`local-group2.sh`:**
+
+   ```bash
+   #!/bin/bash
+   # Add user to local-group-2
+   GROUP_NAME="local-group-2"
+   MEMBER="$1"
+   echo "Adding $MEMBER to $GROUP_NAME"
+   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   ```
+
+   **`local-group3.sh`:**
+
+   ```bash
+   #!/bin/bash
+   # Add user to local-group-3
+   GROUP_NAME="local-group-3"
+   MEMBER="$1"
+   echo "Adding $MEMBER to $GROUP_NAME"
+   gcloud groups add-member "$GROUP_NAME" --member="$MEMBER"
+   ```
