@@ -365,3 +365,28 @@ echo "✅ Vertex AI Workbench instance '$WORKBENCH_NAME' created successfully."
    echo "Adding $SA to $GRP"
    gcloud identity groups memberships add --group-email="$GRP" --member-email="$SA"
    ```
+
+
+#########################
+
+
+# Assign roles to service agents for each CMEK key
+for location in "${LOCATIONS[@]}"; do
+  KEY_RING="key-$location"
+  KEY_NAME="key-${SERVICE_PROJECT}-${location}" # Use the user-provided SERVICE_PROJECT
+
+  for api in "${APIS[@]}"; do
+     if ! contains "${ONLY_ENABLE_APIS[@]}" "$api"; then
+      agent_template="${SERVICE_AGENTS[$api]}"
+      agent_email="${agent_template/PROJECT_NUMBER/$SERVICE_PROJECT_NUMBER}"
+
+      echo "Granting roles/cloudkms.cryptoKeyEncrypterDecrypter to $agent_email on key $KEY_NAME in $location"
+      gcloud kms keys add-iam-policy-binding "$KEY_NAME" \
+        --keyring="$KEY_RING" \
+        --location="$location" \
+        --project="$VAULT_PROJECT_ID" \
+        --member="serviceAccount:$agent_email" \
+        --role="roles/cloudkms.cryptoKeyEncrypterDecrypter"
+    fi
+  done
+done
