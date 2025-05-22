@@ -42,16 +42,11 @@ if [ "$MODE" == "--dry-run" ]; then
   echo "--- Performing Dry Run for Vertex AI Notebook Deletion ---"
   # Check if Vertex AI Notebook instance exists before dry-running deletion
   if gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' found in zone '${ZONE}'. Proceeding with dry run for deletion."
-    set +e # Temporarily disable exit on error for the dry-run command
-    echo "Executing Vertex AI Notebook dry-run deletion command: gcloud workbench instances delete \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --dry-run"
-    gcloud workbench instances delete "${NOTEBOOK_NAME}" \
-      --project="${SERVICE_PROJECT_ID}" \
-      --location="${ZONE}" \
-      --dry-run
-    set -e # Re-enable exit on error
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' found in zone '${ZONE}'. Simulating deletion."
+    # For dry-run of destructive commands, it's safest to just echo the command.
+    echo "Simulating: gcloud workbench instances delete \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --quiet"
   else
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Skipping dry run for deletion."
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Skipping dry run for deletion as it does not exist."
   fi
 
 elif [ "$MODE" == "--apply" ]; then
@@ -59,7 +54,7 @@ elif [ "$MODE" == "--apply" ]; then
   # Check if Vertex AI Notebook instance exists before applying deletion
   if gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' found in zone '${ZONE}'. Proceeding with deletion."
-    echo "Executing Vertex AI Notebook deletion command: gcloud workbench instances delete \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\""
+    echo "Executing Vertex AI Notebook deletion command: gcloud workbench instances delete \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --quiet"
     gcloud workbench instances delete "${NOTEBOOK_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
       --location="${ZONE}" \
