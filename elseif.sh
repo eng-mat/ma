@@ -9,6 +9,10 @@ set -e
 # --- Script Arguments ---
 MODE="$1" # Expected: "--dry-run" or "--apply"
 
+# DEBUG: Print the argument received and the MODE variable
+echo "DEBUG: Argument 1 received: '$1'"
+echo "DEBUG: MODE variable set to: '$MODE'"
+
 # --- Required Environment Variables (passed from GitHub Actions) ---
 # SERVICE_PROJECT_ID
 # ENVIRONMENT_TYPE (new input: nonprod or prod)
@@ -133,13 +137,14 @@ if [ "$MODE" == "--dry-run" ]; then
   # Use '!' to invert the exit status: if describe FAILS (resource not found), the condition is TRUE.
   if ! gcloud storage buckets describe "gs://${GCS_BUCKET_NAME}" --project="${SERVICE_PROJECT_ID}" &> /dev/null; then
     echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' not found. Proceeding with dry run for creation."
+    set +e # Temporarily disable exit on error for the dry-run command
     gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
       --location="${REGION}" \
       --default-kms-key="${GCS_CMEK_KEY}" \
       --uniform-bucket-level-access \
-      --dry-run \
-      || true # Allow dry-run to succeed even if gcloud warns about unsupported flags
+      --dry-run
+    set -e # Re-enable exit on error
   else
     echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' already exists. Skipping dry run for creation."
   fi
@@ -149,6 +154,7 @@ if [ "$MODE" == "--dry-run" ]; then
   # Use '!' to invert the exit status: if describe FAILS (resource not found), the condition is TRUE.
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Proceeding with dry run for creation."
+    set +e # Temporarily disable exit on error for the dry-run command
     gcloud workbench instances create "${NOTEBOOK_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
       --location="${ZONE}" \
@@ -167,8 +173,8 @@ if [ "$MODE" == "--dry-run" ]; then
       --kms-key="${CMEK_KEY}" \
       --no-shielded-secure-boot \
       --shielded-integrity-monitoring \
-      --shielded-vtpm \
-      || true # Allow dry-run to succeed even if gcloud warns about unsupported flags
+      --shielded-vtpm
+    set -e # Re-enable exit on error
   else
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists in zone '${ZONE}'. Skipping dry run for creation."
   fi
