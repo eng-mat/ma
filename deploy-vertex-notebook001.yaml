@@ -5,9 +5,16 @@ on:
   workflow_dispatch:
     inputs:
       service_project_id:
-        description: 'Service Project ID (e.g., poc-my-project-123, ppoc-another-project-456). This determines the environment type (nonprod/prod) and is used for resource naming.'
+        description: 'Service Project ID (e.g., test-poc-mymy, another-ppoc-project). Note: poc/ppoc should be in the second segment.'
         required: true
         type: string
+      environment_type:
+        description: 'Select the environment type (nonprod or prod). This will be used for environment-specific configurations like CMEK keys.'
+        required: true
+        type: choice
+        options:
+          - nonprod
+          - prod
       region:
         description: 'Select the GCP Region for the Notebook and GCS Bucket (us-east4 or us-central1).'
         required: true
@@ -72,6 +79,7 @@ jobs:
           ./scripts/deploy_gcp_resources.sh --dry-run
         env:
           SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }} # New input
           REGION: ${{ inputs.region }}
           VPC_NAME: ${{ inputs.vpc_name }}
           SUBNET_NAME: ${{ inputs.subnet_name }}
@@ -84,9 +92,9 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
-    # The environment for this job is dynamically selected based on the service_project_id.
+    # The environment for this job is dynamically selected based on the environment_type input.
     # Configure 'nonprod' and 'prod' environments in GitHub with required approval rules and WIF credentials.
-    environment: ${{ contains(inputs.service_project_id, 'poc') && 'nonprod' || 'prod' }}
+    environment: ${{ inputs.environment_type }} # Use the new input directly
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -105,6 +113,7 @@ jobs:
           ./scripts/deploy_gcp_resources.sh --apply
         env:
           SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }} # New input
           REGION: ${{ inputs.region }}
           VPC_NAME: ${{ inputs.vpc_name }}
           SUBNET_NAME: ${{ inputs.subnet_name }}
