@@ -9,6 +9,9 @@ set -e
 # --- Script Arguments ---
 MODE="$1" # Expected: "--dry-run" or "--apply"
 
+# Trim whitespace/hidden characters from MODE
+MODE=$(echo "$MODE" | xargs)
+
 # DEBUG: Print the argument received and the MODE variable
 echo "DEBUG: Argument 1 received: '$1'"
 echo "DEBUG: MODE variable set to: '$MODE'"
