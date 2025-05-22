@@ -39,7 +39,7 @@ fi
 
 echo "--- Inputs Received ---"
 echo "SERVICE_PROJECT_ID: $SERVICE_PROJECT_ID"
-echo "ENVIRONMENT_TYPE: $ENVIRONMENT_TYPE" # New input
+echo "ENVIRONMENT_TYPE: $ENVIRONMENT_TYPE"
 echo "REGION: $REGION"
 echo "VPC_NAME: $VPC_NAME"
 echo "SUBNET_NAME: $SUBNET_NAME"
@@ -69,24 +69,21 @@ if ! [[ "$LAST_NAME_FIRST_INITIAL" =~ ^[a-z]+-[a-z]$ ]]; then
   exit 1
 fi
 
-# --- Determine Host Project ID based on VPC name ---
-# The VPC_NAME format is expected to be 'vpc-hostX-ENV-REGION' (e.g., vpc-host1-prod-us-east4)
-# Extract 'hostX' and 'ENV' from the VPC name.
-HOST_IDENTIFIER=$(echo "$VPC_NAME" | cut -d'-' -f2) # Extracts 'host1', 'host2', or 'host3'
-VPC_ENV_TYPE=$(echo "$VPC_NAME" | cut -d'-' -f3)   # Extracts 'prod' or 'nonprod' from VPC name
-
-HOST_PROJECT_ID_BASE="${HOST_IDENTIFIER}-${VPC_ENV_TYPE}" # e.g., host1-prod
-
-# Map the base identifier to the full host project name
-case "$HOST_PROJECT_ID_BASE" in
-  "host1-prod") HOST_PROJECT_ID="host-project-1-prod" ;;
-  "host1-nonprod") HOST_PROJECT_ID="host-project-1-nonprod" ;;
-  "host2-prod") HOST_PROJECT_ID="host-project-2-prod" ;;
-  "host2-nonprod") HOST_PROJECT_ID="host-project-2-nonprod" ;;
-  "host3-prod") HOST_PROJECT_ID="host-project-3-prod" ;;
-  "host3-nonprod") HOST_PROJECT_ID="host-project-3-nonprod" ;;
+# --- Determine Host Project ID based on VPC name mapping ---
+# This uses a direct mapping from the selected VPC_NAME to the Host Project ID.
+HOST_PROJECT_ID=""
+case "$VPC_NAME" in
+  "vpc-ss-tru-nonprod-7"|"vpc-ss-tru-prod-7")
+    HOST_PROJECT_ID="akilapa-vpc"
+    ;;
+  "vpc-jjk-tru-nonprod-7"|"vpc-jjk-tru-prod-7")
+    HOST_PROJECT_ID="vpc-elese-aki"
+    ;;
+  "vpc-jjkkula-tru-nonprod-7"|"vpc-jjkkula-tru-prod-7")
+    HOST_PROJECT_ID="aya-kudelo-pak"
+    ;;
   *)
-    echo "Error: Could not determine host project from VPC name '$VPC_NAME'. Please check VPC name format."
+    echo "Error: Could not determine host project for VPC name '$VPC_NAME'. Please check VPC name selection."
     exit 1
     ;;
 esac
@@ -115,9 +112,9 @@ echo "Vertex AI Service Account: $VERTEX_SA"
 
 # --- Construct CMEK Key for Notebook and GCS Bucket ---
 # Format: projects/my-key-(nonprod or prod)/locations/(us-east4 or us-central1)/keyRings/key-(nonprod or prod)-(us-east4 or us-central1)-my-(project_id)-(us-east4 or us-central1)
-CMEK_VAULT_PROJECT="my-key-${ENVIRONMENT_TYPE}" # Uses the new ENVIRONMENT_TYPE input
+CMEK_VAULT_PROJECT="my-key-${ENVIRONMENT_TYPE}" # Uses the ENVIRONMENT_TYPE input
 CMEK_KEY_LOCATION="${REGION}"
-CMEK_KEY_RING="key-${ENVIRONMENT_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}" # Uses the new ENVIRONMENT_TYPE input
+CMEK_KEY_RING="key-${ENVIRONMENT_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}" # Uses the ENVIRONMENT_TYPE input
 CMEK_KEY="projects/${CMEK_VAULT_PROJECT}/locations/${CMEK_KEY_LOCATION}/keyRings/${CMEK_KEY_RING}/cryptoKeys/key-${ENVIRONMENT_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
 echo "CMEK Key: $CMEK_KEY"
 
