@@ -27,14 +27,13 @@ on:
         required: true
         type: choice
         options:
-          # Example VPCs. Adjust these options to match your actual VPC names and their associated host projects.
-          # The format 'vpc-hostX-ENV-REGION' helps the script derive the host project and environment type.
-          - vpc-host1-prod-us-east4
-          - vpc-host1-nonprod-us-east4
-          - vpc-host2-prod-us-central1
-          - vpc-host2-nonprod-us-central1
-          - vpc-host3-prod-us-east4
-          - vpc-host3-nonprod-us-central1
+          # Updated VPC names based on your provided mapping
+          - vpc-ss-tru-nonprod-7
+          - vpc-ss-tru-prod-7
+          - vpc-jjk-tru-nonprod-7
+          - vpc-jjk-tru-prod-7
+          - vpc-jjkkula-tru-nonprod-7
+          - vpc-jjkkula-tru-prod-7
       subnet_name:
         description: 'Enter the specific subnet name within the selected VPC (e.g., subnet-us-east4-1).'
         required: true
@@ -57,31 +56,26 @@ jobs:
   # Job 1: Dry Run Validation
   # This job calculates all parameters and performs a dry run without applying any changes.
   dry_run_validation:
-    name: "Dry Run Validation" # Updated name
+    name: "Dry Run Validation"
     runs-on:
-      group: my-group-name # Updated to use a runner group
+      group: my-group-name
     environment:
-      name: pordpp # Updated environment name
+      name: pordpp
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install required tools # Added new step
+      - name: Install required tools
         run: |-
           uname -a
 
-      - name: Setup Cloud SDK # Renamed step
-        id: 'gcloud' # Added ID
+      - name: Setup Cloud SDK
+        id: 'gcloud'
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
-          # Explicitly pass WIF credentials for authentication
           workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
           service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
-          # The automation account might be used for specific gcloud commands if different from SVC_ACCOUNT
-          # For general gcloud setup, service_account is usually sufficient.
-          # If GCP_AUTOMATION_ACCOUNT is a separate SA for specific actions, you might use it in a separate gcloud config block.
-          # For now, assuming GCP_SVC_ACCOUNT is the primary SA for setup.
 
       - name: Perform Dry Run using external script
         run: |
@@ -99,31 +93,27 @@ jobs:
   # Job 2: Apply Changes
   # This job applies the actual changes to GCP after successful dry run and approval.
   apply:
-    name: "Apply Changes" # Updated name
+    name: "Apply Changes"
     runs-on:
-      group: my-group-name # Updated to use a runner group
-    needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
-    # The 'pordd-approval' environment is where your approval rules should be configured.
+      group: my-group-name
+    needs: dry_run_validation
     environment:
-      name: pordpp-approval # Updated environment name
+      name: pordpp-approval
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install required tools # Added new step
+      - name: Install required tools
         run: |-
           uname -a
 
-      - name: Setup Cloud SDK # Renamed step
-        id: 'gcloud' # Added ID
+      - name: Setup Cloud SDK
+        id: 'gcloud'
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
-          # Explicitly pass WIF credentials for authentication
           workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
           service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
-          # Assuming GCP_AUTOMATION_ACCOUNT is not directly used by setup-gcloud for primary authentication.
-          # If it's needed for specific gcloud commands, you might configure it separately or ensure GCP_SVC_ACCOUNT has necessary permissions.
 
       - name: Make script executable
         run: chmod +x scripts/deploy_gcp_resources.sh
