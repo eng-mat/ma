@@ -1,0 +1,113 @@
+name: Deploy Vertex AI Notebook and GCS Bucket
+
+# This workflow is triggered manually from the GitHub Actions UI.
+on:
+  workflow_dispatch:
+    inputs:
+      service_project_id:
+        description: 'Service Project ID (e.g., poc-my-project-123, ppoc-another-project-456). This determines the environment type (nonprod/prod) and is used for resource naming.'
+        required: true
+        type: string
+      region:
+        description: 'Select the GCP Region for the Notebook and GCS Bucket (us-east4 or us-central1).'
+        required: true
+        type: choice
+        options:
+          - us-east4
+          - us-central1
+      vpc_name:
+        description: 'Select the VPC network from the available options. This choice helps determine the correct host project.'
+        required: true
+        type: choice
+        options:
+          # Example VPCs. Adjust these options to match your actual VPC names and their associated host projects.
+          # The format 'vpc-hostX-ENV-REGION' helps the script derive the host project and environment type.
+          - vpc-host1-prod-us-east4
+          - vpc-host1-nonprod-us-east4
+          - vpc-host2-prod-us-central1
+          - vpc-host2-nonprod-us-central1
+          - vpc-host3-prod-us-east4
+          - vpc-host3-nonprod-us-central1
+      subnet_name:
+        description: 'Enter the specific subnet name within the selected VPC (e.g., subnet-us-east4-1).'
+        required: true
+        type: string
+      instance_owner_email:
+        description: 'Email address of the Vertex AI Notebook instance owner.'
+        required: true
+        type: string
+      last_name_first_initial:
+        description: 'Your last name followed by your first initial (e.g., smith-j). This will be used to form the notebook name: smith-j-notebook.'
+        required: true
+        type: string
+      machine_type:
+        description: 'Machine type for the notebook (e.g., e2-standard-4). Defaults to e2-standard-4 if not specified.'
+        required: false
+        default: 'e2-standard-4'
+        type: string
+
+jobs:
+  # Job 1: Dry Run Validation
+  # This job calculates all parameters and performs a dry run without applying any changes.
+  dry_run_validation:
+    runs-on: ubuntu-latest
+    # The 'dry-run' environment should be configured in GitHub to provide WIF credentials.
+    environment:
+      name: dry-run
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          # WIF credentials are automatically picked up from the environment if configured.
+
+      - name: Make script executable
+        run: chmod +x scripts/deploy_gcp_resources.sh
+
+      - name: Perform Dry Run using external script
+        run: |
+          ./scripts/deploy_gcp_resources.sh --dry-run
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          REGION: ${{ inputs.region }}
+          VPC_NAME: ${{ inputs.vpc_name }}
+          SUBNET_NAME: ${{ inputs.subnet_name }}
+          INSTANCE_OWNER_EMAIL: ${{ inputs.instance_owner_email }}
+          LAST_NAME_FIRST_INITIAL: ${{ inputs.last_name_first_initial }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
+
+  # Job 2: Apply Changes
+  # This job applies the actual changes to GCP after successful dry run and approval.
+  apply:
+    runs-on: ubuntu-latest
+    needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
+    # The environment for this job is dynamically selected based on the service_project_id.
+    # Configure 'nonprod' and 'prod' environments in GitHub with required approval rules and WIF credentials.
+    environment: ${{ contains(inputs.service_project_id, 'poc') && 'nonprod' || 'prod' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          # WIF credentials are automatically picked up from the environment if configured.
+
+      - name: Make script executable
+        run: chmod +x scripts/deploy_gcp_resources.sh
+
+      - name: Apply Changes using external script
+        run: |
+          ./scripts/deploy_gcp_resources.sh --apply
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          REGION: ${{ inputs.region }}
+          VPC_NAME: ${{ inputs.vpc_name }}
+          SUBNET_NAME: ${{ inputs.subnet_name }}
+          INSTANCE_OWNER_EMAIL: ${{ inputs.instance_owner_email }}
+          LAST_NAME_FIRST_INITIAL: ${{ inputs.last_name_first_initial }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
