@@ -57,15 +57,21 @@ jobs:
   # Job 1: Dry Run Validation
   # This job calculates all parameters and performs a dry run without applying any changes.
   dry_run_validation:
-    runs-on: ubuntu-latest
-    # The 'dry-run' environment should be configured in GitHub to provide WIF credentials.
+    name: "Dry Run Validation" # Updated name
+    runs-on:
+      group: my-group-name # Updated to use a runner group
     environment:
-      name: dry-run
+      name: pordpp # Updated environment name
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up gcloud CLI
+      - name: Install required tools # Added new step
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK # Renamed step
+        id: 'gcloud' # Added ID
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
@@ -76,9 +82,6 @@ jobs:
           # For general gcloud setup, service_account is usually sufficient.
           # If GCP_AUTOMATION_ACCOUNT is a separate SA for specific actions, you might use it in a separate gcloud config block.
           # For now, assuming GCP_SVC_ACCOUNT is the primary SA for setup.
-
-      - name: Make script executable
-        run: chmod +x scripts/deploy_gcp_resources.sh
 
       - name: Perform Dry Run using external script
         run: |
@@ -96,16 +99,23 @@ jobs:
   # Job 2: Apply Changes
   # This job applies the actual changes to GCP after successful dry run and approval.
   apply:
-    runs-on: ubuntu-latest
+    name: "Apply Changes" # Updated name
+    runs-on:
+      group: my-group-name # Updated to use a runner group
     needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
-    # The 'pordd' environment is where your WIF secrets are stored and where approval rules should be configured.
+    # The 'pordd-approval' environment is where your approval rules should be configured.
     environment:
-      name: pordd # Changed to 'pordd' as per your environment name
+      name: pordpp-approval # Updated environment name
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up gcloud CLI
+      - name: Install required tools # Added new step
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK # Renamed step
+        id: 'gcloud' # Added ID
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
