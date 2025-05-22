@@ -11,6 +11,7 @@ MODE="$1" # Expected: "--dry-run" or "--apply"
 
 # --- Required Environment Variables (passed from GitHub Actions) ---
 # SERVICE_PROJECT_ID
+# ENVIRONMENT_TYPE (new input: nonprod or prod)
 # REGION
 # VPC_NAME
 # SUBNET_NAME
@@ -20,13 +21,14 @@ MODE="$1" # Expected: "--dry-run" or "--apply"
 
 # Validate required environment variables
 if [ -z "$SERVICE_PROJECT_ID" ] || \
+   [ -z "$ENVIRONMENT_TYPE" ] || \
    [ -z "$REGION" ] || \
    [ -z "$VPC_NAME" ] || \
    [ -z "$SUBNET_NAME" ] || \
    [ -z "$INSTANCE_OWNER_EMAIL" ] || \
    [ -z "$LAST_NAME_FIRST_INITIAL" ]; then
   echo "Error: One or more required environment variables are not set."
-  echo "Required: SERVICE_PROJECT_ID, REGION, VPC_NAME, SUBNET_NAME, INSTANCE_OWNER_EMAIL, LAST_NAME_FIRST_INITIAL"
+  echo "Required: SERVICE_PROJECT_ID, ENVIRONMENT_TYPE, REGION, VPC_NAME, SUBNET_NAME, INSTANCE_OWNER_EMAIL, LAST_NAME_FIRST_INITIAL"
   exit 1
 fi
 
@@ -37,6 +39,7 @@ fi
 
 echo "--- Inputs Received ---"
 echo "SERVICE_PROJECT_ID: $SERVICE_PROJECT_ID"
+echo "ENVIRONMENT_TYPE: $ENVIRONMENT_TYPE" # New input
 echo "REGION: $REGION"
 echo "VPC_NAME: $VPC_NAME"
 echo "SUBNET_NAME: $SUBNET_NAME"
@@ -47,9 +50,10 @@ echo "MODE: $MODE"
 echo "-----------------------"
 
 # --- Input Format Validations ---
-# Validate SERVICE_PROJECT_ID format (e.g., starts with poc/ppoc, contains only lowercase letters, numbers, and hyphens)
-if ! [[ "$SERVICE_PROJECT_ID" =~ ^(poc|ppoc)-[a-z0-9-]+$ ]]; then
-  echo "Error: SERVICE_PROJECT_ID '$SERVICE_PROJECT_ID' does not follow the expected format (e.g., poc-my-project-123)."
+# Validate SERVICE_PROJECT_ID format (e.g., test-poc-mymy, another-ppoc-project)
+# Allows alphanumeric and hyphens, with poc/ppoc specifically in the second segment.
+if ! [[ "$SERVICE_PROJECT_ID" =~ ^[a-z0-9-]+-(poc|ppoc)-[a-z0-9.-]+$ ]]; then
+  echo "Error: SERVICE_PROJECT_ID '$SERVICE_PROJECT_ID' does not follow the expected format (e.g., test-poc-my-project)."
   exit 1
 fi
 
@@ -64,19 +68,6 @@ if ! [[ "$LAST_NAME_FIRST_INITIAL" =~ ^[a-z]+-[a-z]$ ]]; then
   echo "Error: LAST_NAME_FIRST_INITIAL '$LAST_NAME_FIRST_INITIAL' does not follow the expected format (e.g., smith-j)."
   exit 1
 fi
-
-# --- Determine Environment Type (nonprod/prod) based on service_project_id ---
-# 'poc' in service_project_id indicates nonprod, 'ppoc' indicates prod.
-ENV_TYPE=""
-if [[ "$SERVICE_PROJECT_ID" == *"poc"* ]]; then
-  ENV_TYPE="nonprod"
-elif [[ "$SERVICE_PROJECT_ID" == *"ppoc"* ]]; then
-  ENV_TYPE="prod"
-else
-  echo "Error: service_project_id must contain 'poc' or 'ppoc' to determine environment type."
-  exit 1
-fi
-echo "Determined Environment Type: $ENV_TYPE"
 
 # --- Determine Host Project ID based on VPC name ---
 # The VPC_NAME format is expected to be 'vpc-hostX-ENV-REGION' (e.g., vpc-host1-prod-us-east4)
@@ -124,10 +115,10 @@ echo "Vertex AI Service Account: $VERTEX_SA"
 
 # --- Construct CMEK Key for Notebook and GCS Bucket ---
 # Format: projects/my-key-(nonprod or prod)/locations/(us-east4 or us-central1)/keyRings/key-(nonprod or prod)-(us-east4 or us-central1)-my-(project_id)-(us-east4 or us-central1)
-CMEK_VAULT_PROJECT="my-key-${ENV_TYPE}" # Uses the determined ENV_TYPE
+CMEK_VAULT_PROJECT="my-key-${ENVIRONMENT_TYPE}" # Uses the new ENVIRONMENT_TYPE input
 CMEK_KEY_LOCATION="${REGION}"
-CMEK_KEY_RING="key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
-CMEK_KEY="projects/${CMEK_VAULT_PROJECT}/locations/${CMEK_KEY_LOCATION}/keyRings/${CMEK_KEY_RING}/cryptoKeys/key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
+CMEK_KEY_RING="key-${ENVIRONMENT_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}" # Uses the new ENVIRONMENT_TYPE input
+CMEK_KEY="projects/${CMEK_VAULT_PROJECT}/locations/${CMEK_KEY_LOCATION}/keyRings/${CMEK_KEY_RING}/cryptoKeys/key-${ENVIRONMENT_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
 echo "CMEK Key: $CMEK_KEY"
 
 # --- Construct GCS Bucket Name and its CMEK Key ---
