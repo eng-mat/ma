@@ -1,0 +1,287 @@
+name: Deploy Vertex AI Notebook and GCS Bucket
+
+# This workflow is triggered manually from the GitHub Actions UI.
+on:
+  workflow_dispatch:
+    inputs:
+      service_project_id:
+        description: 'Service Project ID (e.g., poc-my-project-123, ppoc-another-project-456). This determines the environment type (nonprod/prod) and is used for resource naming.'
+        required: true
+        type: string
+      region:
+        description: 'Select the GCP Region for the Notebook and GCS Bucket (us-east4 or us-central1).'
+        required: true
+        type: choice
+        options:
+          - us-east4
+          - us-central1
+      vpc_name:
+        description: 'Select the VPC network from the available options. This choice helps determine the correct host project.'
+        required: true
+        type: choice
+        options:
+          # Example VPCs. Adjust these options to match your actual VPC names and their associated host projects.
+          # The format 'vpc-hostX-ENV-REGION' helps the script derive the host project and environment type.
+          - vpc-host1-prod-us-east4
+          - vpc-host1-nonprod-us-east4
+          - vpc-host2-prod-us-central1
+          - vpc-host2-nonprod-us-central1
+          - vpc-host3-prod-us-east4
+          - vpc-host3-nonprod-us-central1
+      subnet_name:
+        description: 'Enter the specific subnet name within the selected VPC (e.g., subnet-us-east4-1).'
+        required: true
+        type: string
+      instance_owner_email:
+        description: 'Email address of the Vertex AI Notebook instance owner.'
+        required: true
+        type: string
+      last_name_first_initial:
+        description: 'Your last name followed by your first initial (e.g., smith-j). This will be used to form the notebook name: smith-j-notebook.'
+        required: true
+        type: string
+      machine_type:
+        description: 'Machine type for the notebook (e.g., e2-standard-4). Defaults to e2-standard-4 if not specified.'
+        required: false
+        default: 'e2-standard-4'
+        type: string
+
+jobs:
+  # Job 1: Dry Run Validation
+  # This job calculates all parameters and performs a dry run without applying any changes.
+  dry_run_validation:
+    runs-on: ubuntu-latest
+    # The 'dry-run' environment should be configured in GitHub to provide WIF credentials.
+    environment:
+      name: dry-run
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          # WIF credentials are automatically picked up from the environment if configured.
+          # Ensure your GitHub environment 'dry-run' has the necessary GCP_PROJECT_ID and WIF secrets.
+
+      - name: Calculate Derived Variables and Perform Dry Run
+        id: calculate_and_dry_run
+        run: |
+          # Assign inputs to shell variables for easier use
+          SERVICE_PROJECT_ID="${{ inputs.service_project_id }}"
+          REGION="${{ inputs.region }}"
+          VPC_NAME="${{ inputs.vpc_name }}"
+          SUBNET_NAME="${{ inputs.subnet_name }}"
+          INSTANCE_OWNER_EMAIL="${{ inputs.instance_owner_email }}"
+          LAST_NAME_FIRST_INITIAL="${{ inputs.last_name_first_initial }}"
+          MACHINE_TYPE="${{ inputs.machine_type }}"
+
+          # --- Determine Environment Type (nonprod/prod) based on service_project_id ---
+          # 'poc' in service_project_id indicates nonprod, 'ppoc' indicates prod.
+          ENV_TYPE=""
+          if [[ "$SERVICE_PROJECT_ID" == *"poc"* ]]; then
+            ENV_TYPE="nonprod"
+          elif [[ "$SERVICE_PROJECT_ID" == *"ppoc"* ]]; then
+            ENV_TYPE="prod"
+          else
+            echo "Error: service_project_id must contain 'poc' or 'ppoc' to determine environment type."
+            exit 1
+          fi
+          echo "Determined Environment Type: $ENV_TYPE"
+
+          # --- Determine Host Project ID based on VPC name ---
+          # The VPC_NAME format is expected to be 'vpc-hostX-ENV-REGION' (e.g., vpc-host1-prod-us-east4)
+          # Extract 'hostX' and 'ENV' from the VPC name.
+          HOST_IDENTIFIER=$(echo "$VPC_NAME" | cut -d'-' -f2) # Extracts 'host1', 'host2', or 'host3'
+          VPC_ENV_TYPE=$(echo "$VPC_NAME" | cut -d'-' -f3)   # Extracts 'prod' or 'nonprod' from VPC name
+
+          HOST_PROJECT_ID_BASE="${HOST_IDENTIFIER}-${VPC_ENV_TYPE}" # e.g., host1-prod
+
+          # Map the base identifier to the full host project name
+          case "$HOST_PROJECT_ID_BASE" in
+            "host1-prod") HOST_PROJECT_ID="host-project-1-prod" ;;
+            "host1-nonprod") HOST_PROJECT_ID="host-project-1-nonprod" ;;
+            "host2-prod") HOST_PROJECT_ID="host-project-2-prod" ;;
+            "host2-nonprod") HOST_PROJECT_ID="host-project-2-nonprod" ;;
+            "host3-prod") HOST_PROJECT_ID="host-project-3-prod" ;;
+            "host3-nonprod") HOST_PROJECT_ID="host-project-3-nonprod" ;;
+            *)
+              echo "Error: Could not determine host project from VPC name '$VPC_NAME'. Please check VPC name format."
+              exit 1
+              ;;
+          esac
+          echo "Determined Host Project ID: $HOST_PROJECT_ID"
+
+          # --- Construct full network and subnet resource paths ---
+          FULL_NETWORK="projects/${HOST_PROJECT_ID}/global/networks/${VPC_NAME}"
+          SUBNET_RESOURCE="projects/${HOST_PROJECT_ID}/regions/${REGION}/subnetworks/${SUBNET_NAME}"
+          echo "Full Network Path: $FULL_NETWORK"
+          echo "Subnet Resource Path: $SUBNET_RESOURCE"
+
+          # --- Determine Vertex AI Notebook Zone ---
+          # Zone is always region-a
+          ZONE="${REGION}-a"
+          echo "Vertex AI Notebook Zone: $ZONE"
+
+          # --- Construct Vertex AI Notebook Name ---
+          # Format: lastname-firstinitial-notebook
+          NOTEBOOK_NAME="${LAST_NAME_FIRST_INITIAL}-notebook"
+          echo "Vertex AI Notebook Name: $NOTEBOOK_NAME"
+
+          # --- Construct Vertex AI Service Account Email ---
+          # Format: vertexai-sa@${SERVICE_PROJECT_ID}.iam.gserviceaccount.com
+          VERTEX_SA="vertexai-sa@${SERVICE_PROJECT_ID}.iam.gserviceaccount.com"
+          echo "Vertex AI Service Account: $VERTEX_SA"
+
+          # --- Construct CMEK Key for Notebook and GCS Bucket ---
+          # Format: projects/my-key-(nonprod or prod)/locations/(us-east4 or us-central1)/keyRings/key-(nonprod or prod)-(us-east4 or us-central1)-my-(project_id)-(us-east4 or us-central1)
+          CMEK_VAULT_PROJECT="my-key-${ENV_TYPE}" # Uses the determined ENV_TYPE
+          CMEK_KEY_LOCATION="${REGION}"
+          CMEK_KEY_RING="key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
+          CMEK_KEY="projects/${CMEK_VAULT_PROJECT}/locations/${CMEK_KEY_LOCATION}/keyRings/${CMEK_KEY_RING}/cryptoKeys/key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
+          echo "CMEK Key: $CMEK_KEY"
+
+          # --- Construct GCS Bucket Name and its CMEK Key ---
+          # Bucket name: vertex-gcs-${project_id}
+          GCS_BUCKET_NAME="vertex-gcs-${SERVICE_PROJECT_ID}"
+          # GCS bucket uses the same CMEK key as the notebook.
+          GCS_CMEK_KEY="${CMEK_KEY}"
+          echo "GCS Bucket Name: $GCS_BUCKET_NAME"
+          echo "GCS Bucket CMEK Key: $GCS_CMEK_KEY"
+
+          echo "--- Performing Dry Run for GCS Bucket Creation ---"
+          # The '--dry-run' flag simulates the command without making changes.
+          # '|| true' is used to prevent the job from failing if '--dry-run' is not fully supported
+          # for all flags or if there are warnings, allowing the workflow to proceed for review.
+          gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
+            --project="${SERVICE_PROJECT_ID}" \
+            --location="${REGION}" \
+            --default-kms-key="${GCS_CMEK_KEY}" \
+            --uniform-bucket-level-access \
+            --dry-run \
+            || true
+
+          echo "--- Performing Dry Run for Vertex AI Notebook Creation ---"
+          gcloud workbench instances create "${NOTEBOOK_NAME}" \
+            --project="${SERVICE_PROJECT_ID}" \
+            --location="${ZONE}" \
+            --machine-type="${MACHINE_TYPE}" \
+            --boot-disk-size=150GB \
+            --data-disk-size=100GB \
+            --subnet="${SUBNET_RESOURCE}" \
+            --network="${FULL_NETWORK}" \
+            --service-account="${VERTEX_SA}" \
+            --no-enable-public-ip \
+            --no-enable-realtime-in-terminal \
+            --owner="${INSTANCE_OWNER_EMAIL}" \
+            --enable-notebook-upgrade-scheduling \
+            --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
+            --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW \
+            --kms-key="${CMEK_KEY}" \
+            --no-shielded-secure-boot \
+            --shielded-integrity-monitoring \
+            --shielded-vtpm \
+            --dry-run \
+            || true
+
+  # Job 2: Apply Changes
+  # This job applies the actual changes to GCP after successful dry run and approval.
+  apply:
+    runs-on: ubuntu-latest
+    needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
+    # The environment for this job is dynamically selected based on the service_project_id.
+    # Configure 'nonprod' and 'prod' environments in GitHub with required approval rules and WIF credentials.
+    environment: ${{ contains(inputs.service_project_id, 'poc') && 'nonprod' || 'prod' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          # WIF credentials are automatically picked up from the environment if configured.
+
+      - name: Calculate Derived Variables and Apply Changes
+        id: calculate_and_apply
+        run: |
+          # Re-calculate variables to ensure consistency and for clarity in the apply step.
+          SERVICE_PROJECT_ID="${{ inputs.service_project_id }}"
+          REGION="${{ inputs.region }}"
+          VPC_NAME="${{ inputs.vpc_name }}"
+          SUBNET_NAME="${{ inputs.subnet_name }}"
+          INSTANCE_OWNER_EMAIL="${{ inputs.instance_owner_email }}"
+          LAST_NAME_FIRST_INITIAL="${{ inputs.last_name_first_initial }}"
+          MACHINE_TYPE="${{ inputs.machine_type }}"
+
+          # Determine Environment Type (nonprod/prod)
+          ENV_TYPE=""
+          if [[ "$SERVICE_PROJECT_ID" == *"poc"* ]]; then
+            ENV_TYPE="nonprod"
+          elif [[ "$SERVICE_PROJECT_ID" == *"ppoc"* ]]; then
+            ENV_TYPE="prod"
+          else
+            echo "Error: service_project_id must contain 'poc' or 'ppoc'."
+            exit 1
+          fi
+
+          # Determine Host Project ID
+          HOST_IDENTIFIER=$(echo "$VPC_NAME" | cut -d'-' -f2)
+          VPC_ENV_TYPE=$(echo "$VPC_NAME" | cut -d'-' -f3)
+          HOST_PROJECT_ID_BASE="${HOST_IDENTIFIER}-${VPC_ENV_TYPE}"
+
+          case "$HOST_PROJECT_ID_BASE" in
+            "host1-prod") HOST_PROJECT_ID="host-project-1-prod" ;;
+            "host1-nonprod") HOST_PROJECT_ID="host-project-1-nonprod" ;;
+            "host2-prod") HOST_PROJECT_ID="host-project-2-prod" ;;
+            "host2-nonprod") HOST_PROJECT_ID="host-project-2-nonprod" ;;
+            "host3-prod") HOST_PROJECT_ID="host-project-3-prod" ;;
+            "host3-nonprod") HOST_PROJECT_ID="host-project-3-nonprod" ;;
+            *)
+              echo "Error: Could not determine host project from VPC name '$VPC_NAME'."
+              exit 1
+              ;;
+          esac
+
+          FULL_NETWORK="projects/${HOST_PROJECT_ID}/global/networks/${VPC_NAME}"
+          SUBNET_RESOURCE="projects/${HOST_PROJECT_ID}/regions/${REGION}/subnetworks/${SUBNET_NAME}"
+          ZONE="${REGION}-a"
+          NOTEBOOK_NAME="${LAST_NAME_FIRST_INITIAL}-notebook"
+          VERTEX_SA="vertexai-sa@${SERVICE_PROJECT_ID}.iam.gserviceaccount.com"
+
+          CMEK_VAULT_PROJECT="my-key-${ENV_TYPE}"
+          CMEK_KEY_LOCATION="${REGION}"
+          CMEK_KEY_RING="key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
+          CMEK_KEY="projects/${CMEK_VAULT_PROJECT}/locations/${CMEK_KEY_LOCATION}/keyRings/${CMEK_KEY_RING}/cryptoKeys/key-${ENV_TYPE}-${REGION}-my-${SERVICE_PROJECT_ID}-${REGION}"
+
+          GCS_BUCKET_NAME="vertex-gcs-${SERVICE_PROJECT_ID}"
+          GCS_CMEK_KEY="${CMEK_KEY}"
+
+          echo "--- Applying GCS Bucket Creation ---"
+          gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
+            --project="${SERVICE_PROJECT_ID}" \
+            --location="${REGION}" \
+            --default-kms-key="${GCS_CMEK_KEY}" \
+            --uniform-bucket-level-access
+
+          echo "--- Applying Vertex AI Notebook Creation ---"
+          gcloud workbench instances create "${NOTEBOOK_NAME}" \
+            --project="${SERVICE_PROJECT_ID}" \
+            --location="${ZONE}" \
+            --machine-type="${MACHINE_TYPE}" \
+            --boot-disk-size=150GB \
+            --data-disk-size=100GB \
+            --subnet="${SUBNET_RESOURCE}" \
+            --network="${FULL_NETWORK}" \
+            --service-account="${VERTEX_SA}" \
+            --no-enable-public-ip \
+            --no-enable-realtime-in-terminal \
+            --owner="${INSTANCE_OWNER_EMAIL}" \
+            --enable-notebook-upgrade-scheduling \
+            --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
+            --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW \
+            --kms-key="${CMEK_KEY}" \
+            --no-shielded-secure-boot \
+            --shielded-integrity-monitoring \
+            --shielded-vtpm
