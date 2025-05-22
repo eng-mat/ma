@@ -1,0 +1,90 @@
+name: Delete Vertex AI Notebook Instance
+
+# This workflow is triggered manually from the GitHub Actions UI.
+on:
+  workflow_dispatch:
+    inputs:
+      service_project_id:
+        description: 'The GCP Service Project ID where the notebook instance resides.'
+        required: true
+        type: string
+      notebook_name:
+        description: 'The name of the Vertex AI Notebook instance to delete.'
+        required: true
+        type: string
+      zone:
+        description: 'The zone where the notebook instance is located (e.g., us-east4-a, us-central1-a).'
+        required: true
+        type: string
+
+jobs:
+  # Job 1: Dry Run Validation for Deletion
+  # This job performs a dry run of the delete command.
+  dry_run_validation:
+    name: "Dry Run Notebook Deletion"
+    runs-on:
+      group: my-group-name
+    environment:
+      name: pordpp # Using the dry-run environment
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK
+        id: 'gcloud'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - name: Make script executable
+        run: chmod +x scripts/delete_gcp_notebook.sh
+
+      - name: Perform Dry Run Notebook Deletion
+        run: |
+          ./scripts/delete_gcp_notebook.sh --dry-run
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          NOTEBOOK_NAME: ${{ inputs.notebook_name }}
+          ZONE: ${{ inputs.zone }}
+
+  # Job 2: Apply Deletion
+  # This job applies the actual deletion after dry run and approval.
+  apply:
+    name: "Apply Notebook Deletion"
+    runs-on:
+      group: my-group-name
+    needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
+    environment:
+      name: pordpp-approval # Using the approval environment for actual deletion
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |-
+          uname -a
+
+      - name: Setup Cloud SDK
+        id: 'gcloud'
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.service_project_id }}
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+
+      - name: Make script executable
+        run: chmod +x scripts/delete_gcp_notebook.sh
+
+      - name: Apply Notebook Deletion
+        run: |
+          ./scripts/delete_gcp_notebook.sh --apply
+        env:
+          SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
+          NOTEBOOK_NAME: ${{ inputs.notebook_name }}
+          ZONE: ${{ inputs.zone }}
