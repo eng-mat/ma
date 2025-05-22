@@ -69,7 +69,13 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
-          # WIF credentials are automatically picked up from the environment if configured.
+          # Explicitly pass WIF credentials for authentication
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+          # The automation account might be used for specific gcloud commands if different from SVC_ACCOUNT
+          # For general gcloud setup, service_account is usually sufficient.
+          # If GCP_AUTOMATION_ACCOUNT is a separate SA for specific actions, you might use it in a separate gcloud config block.
+          # For now, assuming GCP_SVC_ACCOUNT is the primary SA for setup.
 
       - name: Make script executable
         run: chmod +x scripts/deploy_gcp_resources.sh
@@ -79,7 +85,7 @@ jobs:
           ./scripts/deploy_gcp_resources.sh --dry-run
         env:
           SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
-          ENVIRONMENT_TYPE: ${{ inputs.environment_type }} # New input
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }}
           REGION: ${{ inputs.region }}
           VPC_NAME: ${{ inputs.vpc_name }}
           SUBNET_NAME: ${{ inputs.subnet_name }}
@@ -92,9 +98,9 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     needs: dry_run_validation # This job depends on the dry_run_validation job completing successfully.
-    # The environment for this job is dynamically selected based on the environment_type input.
-    # Configure 'nonprod' and 'prod' environments in GitHub with required approval rules and WIF credentials.
-    environment: ${{ inputs.environment_type }} # Use the new input directly
+    # The 'pordd' environment is where your WIF secrets are stored and where approval rules should be configured.
+    environment:
+      name: pordd # Changed to 'pordd' as per your environment name
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -103,7 +109,11 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ inputs.service_project_id }}
-          # WIF credentials are automatically picked up from the environment if configured.
+          # Explicitly pass WIF credentials for authentication
+          workload_identity_provider: ${{ secrets.GCP_WIF_POOL }}
+          service_account: ${{ secrets.GCP_SVC_ACCOUNT }}
+          # Assuming GCP_AUTOMATION_ACCOUNT is not directly used by setup-gcloud for primary authentication.
+          # If it's needed for specific gcloud commands, you might configure it separately or ensure GCP_SVC_ACCOUNT has necessary permissions.
 
       - name: Make script executable
         run: chmod +x scripts/deploy_gcp_resources.sh
@@ -113,7 +123,7 @@ jobs:
           ./scripts/deploy_gcp_resources.sh --apply
         env:
           SERVICE_PROJECT_ID: ${{ inputs.service_project_id }}
-          ENVIRONMENT_TYPE: ${{ inputs.environment_type }} # New input
+          ENVIRONMENT_TYPE: ${{ inputs.environment_type }}
           REGION: ${{ inputs.region }}
           VPC_NAME: ${{ inputs.vpc_name }}
           SUBNET_NAME: ${{ inputs.subnet_name }}
