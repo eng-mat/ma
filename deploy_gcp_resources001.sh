@@ -138,48 +138,21 @@ if [ "$MODE" == "--dry-run" ]; then
   echo "--- Performing Dry Run for GCS Bucket Creation ---"
   # Check if GCS bucket already exists before dry-running creation
   if ! gcloud storage buckets describe "gs://${GCS_BUCKET_NAME}" --project="${SERVICE_PROJECT_ID}" &> /dev/null; then
-    echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' not found. Proceeding with dry run for creation."
-    set +e # Temporarily disable exit on error for the dry-run command
-    echo "Executing GCS bucket dry-run command: gcloud storage buckets create \"gs://${GCS_BUCKET_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${REGION}\" --default-kms-key=\"${GCS_CMEK_KEY}\" --uniform-bucket-level-access --dry-run"
-    gcloud storage buckets create "gs://${GCS_BUCKET_NAME}" \
-      --project="${SERVICE_PROJECT_ID}" \
-      --location="${REGION}" \
-      --default-kms-key="${GCS_CMEK_KEY}" \
-      --uniform-bucket-level-access \
-      --dry-run
-    set -e # Re-enable exit on error
+    echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' not found. Simulating creation."
+    # For dry-run of creation commands, it's safest to just echo the command.
+    echo "Simulating: gcloud storage buckets create \"gs://${GCS_BUCKET_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${REGION}\" --default-kms-key=\"${GCS_CMEK_KEY}\" --uniform-bucket-level-access"
   else
-    echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' already exists. Skipping dry run for creation."
+    echo "GCS bucket 'gs://${GCS_BUCKET_NAME}' already exists. Skipping dry run for creation as it already exists."
   fi
 
   echo "--- Performing Dry Run for Vertex AI Notebook Creation ---"
   # Check if Vertex AI Notebook instance already exists before dry-running creation
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Proceeding with dry run for creation."
-    set +e # Temporarily disable exit on error for the dry-run command
-    echo "Executing Vertex AI Notebook dry-run command: gcloud workbench instances create \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --machine-type=\"${MACHINE_TYPE}\" --boot-disk-size=150GB --data-disk-size=100GB --subnet=\"${SUBNET_RESOURCE}\" --network=\"${FULL_NETWORK}\" --service-account=\"${VERTEX_SA}\" --no-enable-public-ip --no-enable-realtime-in-terminal --owner=\"${INSTANCE_OWNER_EMAIL}\" --enable-notebook-upgrade-scheduling --notebook-upgrade-schedule=\"WEEKLY:SATURDAY:21:00\" --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW --kms-key=\"${CMEK_KEY}\" --no-shielded-secure-boot --shielded-integrity-monitoring --shielded-vtpm"
-    gcloud workbench instances create "${NOTEBOOK_NAME}" \
-      --project="${SERVICE_PROJECT_ID}" \
-      --location="${ZONE}" \
-      --machine-type="${MACHINE_TYPE}" \
-      --boot-disk-size=150GB \
-      --data-disk-size=100GB \
-      --subnet="${SUBNET_RESOURCE}" \
-      --network="${FULL_NETWORK}" \
-      --service-account="${VERTEX_SA}" \
-      --no-enable-public-ip \
-      --no-enable-realtime-in-terminal \
-      --owner="${INSTANCE_OWNER_EMAIL}" \
-      --enable-notebook-upgrade-scheduling \
-      --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" \
-      --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW \
-      --kms-key="${CMEK_KEY}" \
-      --no-shielded-secure-boot \
-      --shielded-integrity-monitoring \
-      --shielded-vtpm
-    set -e # Re-enable exit on error
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Simulating creation."
+    # For dry-run of creation commands, it's safest to just echo the command.
+    echo "Simulating: gcloud workbench instances create \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --machine-type=\"${MACHINE_TYPE}\" --boot-disk-size=150GB --data-disk-size=100GB --subnet=\"${SUBNET_RESOURCE}\" --network=\"${FULL_NETWORK}\" --service-account=\"${VERTEX_SA}\" --no-enable-public-ip --no-enable-realtime-in-terminal --owner=\"${INSTANCE_OWNER_EMAIL}\" --enable-notebook-upgrade-scheduling --notebook-upgrade-schedule=\"WEEKLY:SATURDAY:21:00\" --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW --kms-key=\"${CMEK_KEY}\" --no-shielded-secure-boot --shielded-integrity-monitoring --shielded-vtpm"
   else
-    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists in zone '${ZONE}'. Skipping dry run for creation."
+    echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' already exists in zone '${ZONE}'. Skipping dry run for creation as it already exists."
   fi
 
 elif [ "$MODE" == "--apply" ]; then
@@ -201,7 +174,7 @@ elif [ "$MODE" == "--apply" ]; then
   # Check if Vertex AI Notebook instance already exists before applying creation
   if ! gcloud workbench instances describe "${NOTEBOOK_NAME}" --project="${SERVICE_PROJECT_ID}" --location="${ZONE}" &> /dev/null; then
     echo "Vertex AI Notebook instance '${NOTEBOOK_NAME}' not found in zone '${ZONE}'. Proceeding with creation."
-    echo "Executing Vertex AI Notebook creation command: gcloud workbench instances create \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --machine-type=\"${MACHINE_TYPE}\" --boot-disk-size=150GB --data-disk-size=100GB --subnet=\"${SUBNET_RESOURCE}\" --network=\"${FULL_NETWORK}\" --service-account=\"${VERTEX_SA}\" --no-enable-public-ip --no-enable-realtime-in-terminal --owner=\"${INSTANCE_OWNER_EMAIL}\" --enable-notebook-upgrade-scheduling --notebook-upgrade-schedule=\"WEEKLY:SATURDAY:21:00\" --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW --kms-key=\"${CMEK_KEY}\" --no-shielded-secure-boot --shielded-integrity-monitoring --shielded-vtpm"
+    echo "Executing Vertex AI Notebook creation command: gcloud workbench instances create \"${NOTEBOOK_NAME}\" --project=\"${SERVICE_PROJECT_ID}\" --location=\"${ZONE}\" --machine-type=\"${MACHINE_TYPE}\" --boot-disk-size=150GB --data-disk-size=100GB --subnet=\"${SUBNET_RESOURCE}\" --network=\"${FULL_NETWORK}\" --service-account=\"${VERTEX_SA}\" --no-enable-public-ip --no-enable-realtime-in-terminal --owner=\"${INSTANCE_OWNER_EMAIL}\" --enable-notebook-upgrade-scheduling --notebook-upgrade-schedule="WEEKLY:SATURDAY:21:00" --metadata=jupyter_notebook_version=JUPYTER_4_PREVIEW --kms-key=\"${CMEK_KEY}\" --no-shielded-secure-boot --shielded-integrity-monitoring --shielded-vtpm"
     gcloud workbench instances create "${NOTEBOOK_NAME}" \
       --project="${SERVICE_PROJECT_ID}" \
       --location="${ZONE}" \
