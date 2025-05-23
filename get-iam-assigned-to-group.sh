@@ -60,7 +60,7 @@ while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
     if [[ -z "$PROJECT_ID" || -z "$AD_GROUP_EMAIL" ]]; then
         log_message "WARNING: Skipping empty or malformed line in mapping file: '$PROJECT_ID $AD_GROUP_EMAIL'"
         continue
-    }
+    fi
 
     log_message "Processing Project: $PROJECT_ID"
     log_message "Mapped AD Group: $AD_GROUP_EMAIL"
