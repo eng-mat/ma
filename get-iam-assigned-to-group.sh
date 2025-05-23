@@ -12,10 +12,13 @@
 # File containing project to AD group mappings (e.g., project-id ad-group@yourdomain.com)
 MAPPING_FILE="project_group_mapping.txt"
 
-# Output file for logging (optional)
+# Output CSV file
+CSV_FILE="iam_roles_report.csv"
+
+# Output file for detailed logging (optional, in addition to CSV)
 LOG_FILE="iam_roles_report.log"
 
-# Function to log messages
+# Function to log messages to console and log file
 log_message() {
     local message="$1"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" | tee -a "$LOG_FILE"
@@ -29,6 +32,10 @@ if [[ ! -f "$MAPPING_FILE" ]]; then
     log_message "ERROR: Mapping file '$MAPPING_FILE' not found. Please create it with project ID and AD group mappings."
     exit 1
 fi
+
+# Initialize the CSV file with headers
+echo "Project_ID,Member_Type,Member_Email,Role" > "$CSV_FILE"
+log_message "Initialized CSV file: '$CSV_FILE' with headers."
 
 while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
     if [[ -z "$PROJECT_ID" || -z "$AD_GROUP_EMAIL" ]]; then
@@ -44,6 +51,7 @@ while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
 
     if [[ -z "$PROJECT_EXISTS" ]]; then
         log_message "NOTE: Project '$PROJECT_ID' not found or decommissioned. Skipping this project."
+        echo "\"$PROJECT_ID\",\"N/A\",\"N/A\",\"Project Not Found/Decommissioned\"" >> "$CSV_FILE"
         log_message "----------------------------------------------------"
         continue
     fi
@@ -52,16 +60,23 @@ while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
 
     # 2. Get IAM roles for the AD Group
     log_message "Fetching IAM roles for AD Group '$AD_GROUP_EMAIL' in project '$PROJECT_ID'..."
-    AD_GROUP_ROLES=$(gcloud projects get-iam-policy "$PROJECT_ID" \
+    # Using --format="csv(bindings.role,bindings.members)" directly will include the "group:" prefix.
+    # We'll post-process to clean it up.
+    AD_GROUP_ROLES_CSV=$(gcloud projects get-iam-policy "$PROJECT_ID" \
         --flatten="bindings[].members" \
-        --format="table(bindings.role,bindings.members)" \
-        --filter="bindings.members:'group:$AD_GROUP_EMAIL'" 2>/dev/null)
+        --format="csv(bindings.role,bindings.members)" \
+        --filter="bindings.members:'group:$AD_GROUP_EMAIL'" 2>/dev/null | tail -n +2) # Skip header row from gcloud csv output
 
-    if [[ -z "$AD_GROUP_ROLES" || "$AD_GROUP_ROLES" == "No matching entries." ]]; then
+    if [[ -z "$AD_GROUP_ROLES_CSV" ]]; then
         log_message "NOTE: AD Group '$AD_GROUP_EMAIL' not found or has no direct roles assigned in project '$PROJECT_ID'."
+        echo "\"$PROJECT_ID\",\"AD_Group\",\"$AD_GROUP_EMAIL\",\"No Direct Roles Found\"" >> "$CSV_FILE"
     else
-        log_message "IAM Roles for AD Group '$AD_GROUP_EMAIL' in Project '$PROJECT_ID':"
-        echo "$AD_GROUP_ROLES" | tee -a "$LOG_FILE" # Use tee to print to console and log file
+        log_message "Exporting IAM Roles for AD Group '$AD_GROUP_EMAIL' to CSV."
+        while IFS=',' read -r role member; do
+            # Clean up the member string (remove "group:")
+            clean_member=$(echo "$member" | sed 's/^group://')
+            echo "\"$PROJECT_ID\",\"AD_Group\",\"$clean_member\",\"$role\"" >> "$CSV_FILE"
+        done <<< "$AD_GROUP_ROLES_CSV"
     fi
 
     # 3. Get Service Accounts with "vertex" in their name and their IAM roles
@@ -72,28 +87,35 @@ while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
 
     if [[ -z "$SERVICE_ACCOUNTS" ]]; then
         log_message "NOTE: No service accounts found in project '$PROJECT_ID'."
+        echo "\"$PROJECT_ID\",\"Service_Account\",\"N/A\",\"No Service Accounts Found\"" >> "$CSV_FILE"
     else
         VERTEX_SA_FOUND=false
         while IFS= read -r SA_EMAIL; do
             if [[ "$SA_EMAIL" == *"vertex"* ]]; then
                 VERTEX_SA_FOUND=true
                 log_message "Found Vertex Service Account: $SA_EMAIL"
-                SA_ROLES=$(gcloud projects get-iam-policy "$PROJECT_ID" \
+                SA_ROLES_CSV=$(gcloud projects get-iam-policy "$PROJECT_ID" \
                     --flatten="bindings[].members" \
-                    --format="table(bindings.role,bindings.members)" \
-                    --filter="bindings.members:'serviceAccount:$SA_EMAIL'" 2>/dev/null)
+                    --format="csv(bindings.role,bindings.members)" \
+                    --filter="bindings.members:'serviceAccount:$SA_EMAIL'" 2>/dev/null | tail -n +2) # Skip header row
 
-                if [[ -z "$SA_ROLES" || "$SA_ROLES" == "No matching entries." ]]; then
+                if [[ -z "$SA_ROLES_CSV" ]]; then
                     log_message "NOTE: Service Account '$SA_EMAIL' has no direct roles assigned in project '$PROJECT_ID'."
+                    echo "\"$PROJECT_ID\",\"Service_Account\",\"$SA_EMAIL\",\"No Direct Roles Found\"" >> "$CSV_FILE"
                 else
-                    log_message "IAM Roles for Vertex Service Account '$SA_EMAIL' in Project '$PROJECT_ID':"
-                    echo "$SA_ROLES" | tee -a "$LOG_FILE"
+                    log_message "Exporting IAM Roles for Vertex Service Account '$SA_EMAIL' to CSV."
+                    while IFS=',' read -r role member; do
+                        # Clean up the member string (remove "serviceAccount:")
+                        clean_member=$(echo "$member" | sed 's/^serviceAccount://')
+                        echo "\"$PROJECT_ID\",\"Service_Account\",\"$clean_member\",\"$role\"" >> "$CSV_FILE"
+                    done <<< "$SA_ROLES_CSV"
                 fi
             fi
         done <<< "$SERVICE_ACCOUNTS"
 
         if ! $VERTEX_SA_FOUND; then
             log_message "NOTE: No service accounts with 'vertex' in their name found in project '$PROJECT_ID'."
+            echo "\"$PROJECT_ID\",\"Service_Account\",\"N/A\",\"No Vertex SA Found\"" >> "$CSV_FILE"
         fi
     fi
 
@@ -102,4 +124,5 @@ while IFS=" " read -r PROJECT_ID AD_GROUP_EMAIL; do
 done < "$MAPPING_FILE"
 
 log_message "IAM Roles Report Generation Completed."
-log_message "Output saved to '$LOG_FILE' (if enabled) and displayed on console."
+log_message "Data exported to '$CSV_FILE'."
+log_message "Detailed logs available in '$LOG_FILE'."
