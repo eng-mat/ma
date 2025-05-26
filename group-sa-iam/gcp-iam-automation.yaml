@@ -11,36 +11,28 @@ on:
         description: 'The GCP Project ID to assign roles in'
         required: true
         type: string
-      gcp_service_account_email:
-        description: 'The email of the GCP Service Account to assign roles to (e.g., github-actions@my-project.iam.gserviceaccount.com)'
+      target_type:
+        description: 'Select the type of principal to assign roles to'
         required: true
-        type: string
-      ad_group_email:
-        description: 'The email of the Active Directory Group to assign roles to (e.g., ad-group@your-domain.com)'
-        required: true
-        type: string
-      individual_roles_sa:
-        description: 'Comma-separated individual IAM roles for the Service Account (e.g., roles/viewer,roles/storage.objectViewer)'
-        required: false
-        type: string
-        default: ''
-      bundled_roles_sa:
-        description: 'Select a predefined bundled role for the Service Account (e.g., GenAI_ADMIN)'
-        required: false
         type: choice
         options:
-          - '' # Empty option for no bundled role
-          - 'GenAI_ADMIN'
-          - 'GenAI_DEVELOPER'
-          - 'CUSTOM_BUNDLE_1' # Example: Add more as needed in the shell script
-        default: ''
-      individual_roles_ad:
-        description: 'Comma-separated individual IAM roles for the AD Group (e.g., roles/editor,roles/compute.networkAdmin)'
+          - 'service_account'
+          - 'ad_group'
+      gcp_service_account_email:
+        description: 'Email of the GCP Service Account (required if Target Type is Service Account)'
+        required: false # This is now optional in the UI, but script will validate based on target_type
+        type: string
+      ad_group_email:
+        description: 'Email of the Active Directory Group (required if Target Type is AD Group)'
+        required: false # This is now optional in the UI, but script will validate based on target_type
+        type: string
+      individual_roles: # Combined input for individual roles for either SA or AD Group
+        description: 'Comma-separated individual IAM roles (e.g., roles/viewer,roles/storage.objectViewer)'
         required: false
         type: string
         default: ''
-      bundled_roles_ad:
-        description: 'Select a predefined bundled role for the AD Group (e.g., GenAI_DEVELOPER)'
+      bundled_role: # Combined input for bundled roles for either SA or AD Group
+        description: 'Select a predefined bundled role (e.g., GenAI_ADMIN)'
         required: false
         type: choice
         options:
@@ -51,94 +43,89 @@ on:
         default: ''
 
 # Define environment variables that will be passed to the jobs.
-# WIF_POOL_ID will still be sourced from GitHub Environment secrets.
 env:
-  # GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_EMAIL, AD_GROUP_EMAIL are now workflow_dispatch inputs.
-  # IAM_ROLES_SA and IAM_ROLES_AD will also come from workflow_dispatch inputs.
-  # Secrets will only hold the fixed values like WIF_POOL_ID.
+  # WIF_POOL_ID and WIF_EXECUTOR_SA_EMAIL are fixed secrets for authentication.
+  WIF_POOL_ID: ${{ secrets.WIF_POOL_ID }}
+  WIF_EXECUTOR_SA_EMAIL: ${{ secrets.WIF_EXECUTOR_SA_EMAIL }} # NEW SECRET REQUIRED
 
 jobs:
   dry-run:
     name: Dry Run IAM Changes
-    runs-on: ubuntu-latest # Use a fresh Ubuntu runner for each job
-    environment: # Link to your GitHub Environment where secrets are stored
-      name: production # IMPORTANT: Replace with your actual GitHub Environment name (e.g., 'dev', 'staging', 'production')
-    permissions:
-      contents: read # Required to checkout the repository code
-      id-token: write # Required for Workload Identity Federation (to get an OIDC token)
-      actions: write # Required to upload artifacts (dry run output)
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4 # Action to checkout your repository code
-
-      - name: Authenticate to GCP via Workload Identity Federation
-        # This action exchanges the GitHub OIDC token for a GCP access token
-        uses: google-github-actions/auth@v2
-        with:
-          # The full resource name of your Workload Identity Pool Provider
-          # Example: 'projects/1234567890/locations/global/workloadIdentityPools/my-pool/providers/github-provider'
-          workload_identity_provider: ${{ secrets.WIF_POOL_ID }}
-          # The GCP Service Account email that the GitHub Actions runner will impersonate.
-          # This SA must have the necessary IAM permissions (e.g., roles/iam.securityAdmin)
-          # and roles/iam.serviceAccountTokenCreator on itself.
-          service_account: ${{ github.event.inputs.gcp_service_account_email }}
-
-      - name: Set up gcloud CLI
-        # Installs and configures the gcloud CLI on the runner
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ github.event.inputs.gcp_project_id }}
-
-      - name: Install jq
-        # jq is a lightweight and flexible command-line JSON processor, used by the shell script.
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Execute Dry Run Script
-        id: dry_run_script # Assign an ID to this step to reference its output/status later
-        # Execute the shell script in 'dry-run' mode.
-        # All script arguments are passed from the GitHub Environment variables and workflow inputs.
-        # The output is redirected to a file for artifact upload.
-        run: |
-          chmod +x ./assign_iam_roles.sh # Make the script executable
-          ./assign_iam_roles.sh \
-            --mode dry-run \
-            --project-id "${{ github.event.inputs.gcp_project_id }}" \
-            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
-            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
-            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
-            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
-            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
-            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}" > dry_run_output.txt 2>&1
-
-      - name: Upload Dry Run Output as Artifact
-        # Uploads the dry run output file as a workflow artifact, allowing review.
-        uses: actions/upload-artifact@v4
-        with:
-          name: dry-run-iam-policy-changes # Name of the artifact
-          path: dry_run_output.txt # Path to the file to upload
-          retention-days: 5 # How long to keep the artifact before it's deleted
-
-  apply:
-    name: Apply IAM Changes
     runs-on: ubuntu-latest
-    needs: dry-run # This job will ONLY run if the 'dry-run' job completes successfully.
-    environment: # Link to your GitHub Environment where secrets are stored
+    environment:
       name: production # IMPORTANT: Replace with your actual GitHub Environment name
     permissions:
-      contents: read # Required to checkout the repository code
-      id-token: write # Required for Workload Identity Federation
+      contents: read
+      id-token: write
+      actions: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Authenticate to GCP via Workload Identity Federation
-        # Re-authenticate in the 'apply' job as each job runs in an isolated environment.
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.WIF_POOL_ID }}
-          service_account: ${{ github.event.inputs.gcp_service_account_email }}
+          workload_identity_provider: ${{ env.WIF_POOL_ID }}
+          # This is the dedicated SA for GitHub Actions to assume, which has permissions to modify IAM.
+          service_account: ${{ env.WIF_EXECUTOR_SA_EMAIL }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ github.event.inputs.gcp_project_id }}
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Execute Dry Run Script
+        id: dry_run_script
+        run: |
+          chmod +x ./assign_iam_roles.sh
+          BASE_COMMAND="./assign_iam_roles.sh \
+            --mode dry-run \
+            --project-id \"${{ github.event.inputs.gcp_project_id }}\" \
+            --target-type \"${{ github.event.inputs.target_type }}\""
+
+          # Conditionally add service account or AD group email
+          if [[ "${{ github.event.inputs.target_type }}" == "service_account" ]]; then
+            BASE_COMMAND+=" --service-account-email \"${{ github.event.inputs.gcp_service_account_email }}\" \
+                            --roles-sa \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-sa \"${{ github.event.inputs.bundled_role }}\""
+          elif [[ "${{ github.event.inputs.target_type }}" == "ad_group" ]]; then
+            BASE_COMMAND+=" --ad-group-email \"${{ github.event.inputs.ad_group_email }}\" \
+                            --roles-ad \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-ad \"${{ github.event.inputs.bundled_role }}\""
+          fi
+
+          eval "$BASE_COMMAND" > dry_run_output.txt 2>&1
+
+      - name: Upload Dry Run Output as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-iam-policy-changes
+          path: dry_run_output.txt
+          retention-days: 5
+
+  apply:
+    name: Apply IAM Changes
+    runs-on: ubuntu-latest
+    needs: dry-run
+    environment:
+      name: production # IMPORTANT: Replace with your actual GitHub Environment name
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_POOL_ID }}
+          service_account: ${{ env.WIF_EXECUTOR_SA_EMAIL }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -149,15 +136,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Execute Apply Script
-        # Execute the shell script in 'apply' mode to implement the changes.
         run: |
-          chmod +x ./assign_iam_roles.sh # Make the script executable
-          ./assign_iam_roles.sh \
+          chmod +x ./assign_iam_roles.sh
+          BASE_COMMAND="./assign_iam_roles.sh \
             --mode apply \
-            --project-id "${{ github.event.inputs.gcp_project_id }}" \
-            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
-            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
-            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
-            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
-            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
-            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}"
+            --project-id \"${{ github.event.inputs.gcp_project_id }}\" \
+            --target-type \"${{ github.event.inputs.target_type }}\""
+
+          # Conditionally add service account or AD group email
+          if [[ "${{ github.event.inputs.target_type }}" == "service_account" ]]; then
+            BASE_COMMAND+=" --service-account-email \"${{ github.event.inputs.gcp_service_account_email }}\" \
+                            --roles-sa \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-sa \"${{ github.event.inputs.bundled_role }}\""
+          elif [[ "${{ github.event.inputs.target_type }}" == "ad_group" ]]; then
+            BASE_COMMAND+=" --ad-group-email \"${{ github.event.inputs.ad_group_email }}\" \
+                            --roles-ad \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-ad \"${{ github.event.inputs.bundled_role }}\""
+          fi
+
+          eval "$BASE_COMMAND"
