@@ -185,37 +185,30 @@ if [[ -z "$CURRENT_POLICY_JSON_RAW" ]]; then
   exit 1
 fi
 
-# --- NEW: JSON Cleanup Function ---
-# This function attempts to fix common JSON parsing issues like semicolons instead of colons.
+# --- NEW: JSON Cleanup Function (More Robust) ---
 cleanup_malformed_json() {
   local input_json="$1"
   local cleaned_json=""
 
-  echo "Attempting to clean up potentially malformed JSON policy..."
-  # Replace semicolons with colons. This is the primary fix for your observed error.
-  # Using `sed` to replace `;` with `:` specifically in places where it's likely
-  # a key-value separator, assuming simple `"`key"` ;` value` or `"`key"` ;` [` structure.
-  # This pattern tries to be precise but might need adjustment for other specific malformations.
+  echo "Attempting to clean up potentially malformed JSON policy (semicolons to colons)..."
+  # Attempt initial fix: replace semicolons with colons
   cleaned_json=$(echo "$input_json" | sed -E 's/("[^"]+")\s*;\s*/\1: /g')
 
-  # You can add more cleanup steps here if other common issues are found:
-  # Example: Remove trailing commas before closing braces/brackets (requires more complex sed or external tool)
-  # cleaned_json=$(echo "$cleaned_json" | sed -E 's/,\s*([}\]])/\1/g') # This is simple, might not catch all cases
-
-  # Attempt to parse the cleaned JSON with jq to ensure it's now valid.
-  # This also pretty-prints it. If it fails, jq will output an error to stderr.
-  local validated_json=$(echo "$cleaned_json" | jq --raw-output '.' 2> >(tee /dev/stderr))
+  # Validate the cleaned JSON with jq. If jq fails, it means the structure is still invalid.
+  local validated_json_output
+  validated_json_output=$(echo "$cleaned_json" | jq --raw-output '.' 2> >(tee /dev/stderr))
   local jq_exit_code=$?
 
   if [[ $jq_exit_code -ne 0 ]]; then
-    echo "Warning: Even after basic cleanup, the JSON policy is still malformed or jq failed to parse it." >&2
-    echo "Proceeding with the best-effort cleaned JSON. This might lead to further errors." >&2
-    # If jq still fails, return the `sed`-cleaned version,
-    # hoping subsequent jq commands can handle it with some tolerance or fail gracefully.
-    echo "$cleaned_json"
+    echo "ERROR: JSON policy is still malformed after basic semicolon cleanup. JQ failed to parse it." >&2
+    echo "Input to JQ before fatal error (likely problematic):" >&2
+    echo "$cleaned_json" >&2
+    # At this point, the JSON is fundamentally broken beyond simple fixes.
+    # We must exit, as attempting to proceed will lead to further jq errors.
+    exit 1
   else
     echo "JSON policy cleanup successful. Policy is now valid JSON."
-    echo "$validated_json"
+    echo "$validated_json_output" # Return the valid JSON
   fi
 }
 
@@ -224,6 +217,7 @@ echo "--- DEBUG: Raw JSON from gcloud (before cleanup) ---"
 echo "$CURRENT_POLICY_JSON_RAW"
 echo "--- END RAW DEBUG ---"
 
+# Call the cleanup function. It will exit if JSON is still malformed.
 CURRENT_POLICY_JSON=$(cleanup_malformed_json "$CURRENT_POLICY_JSON_RAW")
 
 echo "--- DEBUG: Content of CURRENT_POLICY_JSON after cleanup and before jq parsing (after sed filter) ---"
@@ -257,14 +251,32 @@ add_or_update_member() {
   echo "$policy_json_input" # Print full input JSON for thorough debugging
   echo "  DEBUG: End of Input policy_json_input"
 
+  # Crucial Check: Ensure policy_json_input is not empty/malformed before passing to jq
+  if [[ -z "$policy_json_input" ]]; then
+    echo "  FATAL ERROR: Input JSON to add_or_update_member is empty or invalid. Exiting." >&2
+    exit 1
+  fi
+  if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
+    echo "  FATAL ERROR: Input JSON to add_or_update_member is not valid JSON. Exiting." >&2
+    echo "  Problematic JSON: '$policy_json_input'" >&2
+    exit 1
+  fi
+
+
   # Check if a binding for this specific role already exists in the policy.
   # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
   local role_exists_check=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
   local jq_exit_code=$?
-  if [[ $jq_exit_code -ne 0 ]]; then # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
-    echo "  ERROR: jq failed to check for existing role binding for role '$role'. Input might still be malformed or jq expression is faulty." >&2
-    echo "  DEBUG: jq command: echo \"\$policy_json_input\" | jq --arg role \"$role\" '.bindings[] | select(.role == \$role)'" >&2
-    exit 1 # Exit script if jq fails here
+  if [[ $jq_exit_code -ne 0 ]]; then
+    # This might happen if 'bindings' array is missing or empty, which jq handles.
+    # The jq error itself (if any) would have been printed to stderr by `tee`.
+    # We only exit if there's a critical parse error here, not just 'no match'.
+    if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
+        echo "  ERROR: jq failed to check for existing role binding for role '$role' due to invalid input JSON." >&2
+        echo "  Check the output above for jq's error message." >&2
+        exit 1 # Exit script if jq fails here
+    fi
+    # If jq returned non-zero but the input was valid JSON, it means no matching role was found, which is fine.
   fi
 
 
@@ -294,9 +306,12 @@ add_or_update_member() {
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
     ' 2>/dev/null) # Redirect stderr to /dev/null for this check
     jq_exit_code=$?
-    if [[ $jq_exit_code -ne 0 ]]; then # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
-      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might still be malformed or jq expression is faulty." >&2
-      exit 1 # Exit script if jq fails here
+    if [[ $jq_exit_code -ne 0 ]]; then
+        if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
+            echo "  ERROR: jq failed to check for existing member in role '$role' due to invalid input JSON." >&2
+            echo "  Check the output above for jq's error message." >&2
+            exit 1 # Exit script if jq fails here
+        fi
     fi
 
     if [[ -z "$member_in_role_check" ]]; then
@@ -398,7 +413,7 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
       ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
     else
       ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
-    fi # <--- This `fi` was previously `Xfi`
+    fi
   fi
 
   if [[ -n "$ALL_AD_ROLES" ]]; then
