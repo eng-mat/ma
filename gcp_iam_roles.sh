@@ -1,5 +1,168 @@
 #!/bin/bash
 set -euo pipefail
+
+# assign_iam_roles.sh
+# Full script to assign IAM roles to a service account or AD group with dry-run and apply modes.
+
+# --- Configuration and Argument Parsing ---
+MODE=""
+GCP_PROJECT_ID=""
+TARGET_TYPE=""
+GCP_SERVICE_ACCOUNT_EMAIL=""
+AD_GROUP_EMAIL=""
+IAM_ROLES_SA=""
+IAM_ROLES_AD=""
+BUNDLED_ROLES_SA=""
+BUNDLED_ROLES_AD=""
+
+usage() {
+  echo "Usage: $0 --mode <dry-run|apply> --project-id <GCP_PROJECT_ID> \\"
+  echo "          --target-type <service_account|ad_group> \\"
+  echo "          [--service-account-email <SA_EMAIL>] [--ad-group-email <AD_GROUP_EMAIL>] \\"
+  echo "          [--roles-sa <ROLE1,ROLE2>] [--roles-ad <ROLE1,ROLE2>] \\"
+  echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
+  exit 1
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --mode) MODE="$2"; shift ;;
+    --project-id) GCP_PROJECT_ID="$2"; shift ;;
+    --target-type) TARGET_TYPE="$2"; shift ;;
+    --service-account-email) GCP_SERVICE_ACCOUNT_EMAIL="$2"; shift ;;
+    --ad-group-email) AD_GROUP_EMAIL="$2"; shift ;;
+    --roles-sa) IAM_ROLES_SA="$2"; shift ;;
+    --roles-ad) IAM_ROLES_AD="$2"; shift ;;
+    --bundled-roles-sa) BUNDLED_ROLES_SA="$2"; shift ;;
+    --bundled-roles-ad) BUNDLED_ROLES_AD="$2"; shift ;;
+    *) echo "Unknown parameter: $1" >&2; usage ;;
+  esac
+  shift
+done
+
+# --- Validation ---
+[[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$TARGET_TYPE" ]] && usage
+
+if [[ "$TARGET_TYPE" == "service_account" ]]; then
+  [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" ]] && usage
+  [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]] && usage
+elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+  [[ -z "$AD_GROUP_EMAIL" ]] && usage
+  [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]] && usage
+else
+  usage
+fi
+
+# --- CLI Tool Checks ---
+command -v gcloud &>/dev/null || { echo "gcloud CLI is not installed."; exit 1; }
+command -v jq &>/dev/null || { echo "jq is not installed."; exit 1; }
+
+gcloud config set project "$GCP_PROJECT_ID" --quiet
+
+# --- Retrieve Current IAM Policy ---
+RAW_GCLOUD_OUTPUT=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json)
+CURRENT_POLICY_JSON=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
+MODIFIED_POLICY_JSON="$CURRENT_POLICY_JSON"
+
+# --- Functions ---
+get_bundled_roles() {
+  local bundle_name="$1"
+  case "$bundle_name" in
+    "GenAI_ADMIN") echo "roles/aiplatform.admin,roles/aiplatform.user,roles/notebooks.admin,roles/storage.admin,roles/bigquery.admin" ;;
+    "GenAI_DEVELOPER") echo "roles/aiplatform.user,roles/viewer,roles/bigquery.dataViewer,roles/storage.objectViewer" ;;
+    "CUSTOM_BUNDLE_1") echo "roles/compute.admin,roles/container.admin" ;;
+    *) echo "Unknown bundled role: $bundle_name" >&2; exit 1 ;;
+  esac
+}
+
+add_or_update_member() {
+  local policy="$1"
+  local role="$2"
+  local member_type="$3"
+  local email="$4"
+  local member="$member_type:$email"
+
+  if echo "$policy" | jq --arg role "$role" '.bindings[]? | select(.role == $role)' | grep -q .; then
+    if ! echo "$policy" | jq --arg role "$role" --arg member "$member" '.bindings[]? | select(.role == $role) | .members[]? | select(. == $member)' | grep -q .; then
+      echo "$policy" | jq --arg role "$role" --arg member "$member" '
+        .bindings |= map(
+          if .role == $role then .members += [$member] else . end
+        )'
+    else
+      echo "$policy"
+    fi
+  else
+    echo "$policy" | jq --arg role "$role" --arg member "$member" '
+      .bindings += [{role: $role, members: [$member]}]'
+  fi
+}
+
+# --- Collect Roles ---
+resolve_roles() {
+  local roles_input="$1"
+  local bundle="$2"
+  local resolved=""
+  [[ -n "$roles_input" ]] && resolved="$roles_input"
+  [[ -n "$bundle" ]] && resolved="${resolved:+$resolved,}$(get_bundled_roles "$bundle")"
+  echo "$resolved"
+}
+
+ALL_ROLES=""
+MEMBER_TYPE=""
+MEMBER_EMAIL=""
+
+if [[ "$TARGET_TYPE" == "service_account" ]]; then
+  ALL_ROLES=$(resolve_roles "$IAM_ROLES_SA" "$BUNDLED_ROLES_SA")
+  MEMBER_TYPE="serviceAccount"
+  MEMBER_EMAIL="$GCP_SERVICE_ACCOUNT_EMAIL"
+elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+  ALL_ROLES=$(resolve_roles "$IAM_ROLES_AD" "$BUNDLED_ROLES_AD")
+  MEMBER_TYPE="group"
+  MEMBER_EMAIL="$AD_GROUP_EMAIL"
+fi
+
+IFS=',' read -ra ROLES_ARRAY <<< "$ALL_ROLES"
+for role in "${ROLES_ARRAY[@]}"; do
+  role=$(echo "$role" | xargs)
+  MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "$MEMBER_TYPE" "$MEMBER_EMAIL")
+done
+
+# --- Apply or Show ---
+if [[ "$MODE" == "dry-run" ]]; then
+  echo "-------------------------"
+  echo "DRY RUN - PROPOSED POLICY"
+  echo "-------------------------"
+  echo "$MODIFIED_POLICY_JSON" | jq .
+else
+  echo "Applying modified IAM policy to project $GCP_PROJECT_ID..."
+  echo "$MODIFIED_POLICY_JSON" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" -q --format=json -
+  echo "Policy successfully applied."
+fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#!/bin/bash
+set -euo pipefail
 # Uncomment the line below for extremely verbose debugging (shows every command executed)
 # set -x
 
