@@ -1,168 +1,5 @@
 #!/bin/bash
 set -euo pipefail
-
-# assign_iam_roles.sh
-# Full script to assign IAM roles to a service account or AD group with dry-run and apply modes.
-
-# --- Configuration and Argument Parsing ---
-MODE=""
-GCP_PROJECT_ID=""
-TARGET_TYPE=""
-GCP_SERVICE_ACCOUNT_EMAIL=""
-AD_GROUP_EMAIL=""
-IAM_ROLES_SA=""
-IAM_ROLES_AD=""
-BUNDLED_ROLES_SA=""
-BUNDLED_ROLES_AD=""
-
-usage() {
-  echo "Usage: $0 --mode <dry-run|apply> --project-id <GCP_PROJECT_ID> \\"
-  echo "          --target-type <service_account|ad_group> \\"
-  echo "          [--service-account-email <SA_EMAIL>] [--ad-group-email <AD_GROUP_EMAIL>] \\"
-  echo "          [--roles-sa <ROLE1,ROLE2>] [--roles-ad <ROLE1,ROLE2>] \\"
-  echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
-  exit 1
-}
-
-while [[ "$#" -gt 0 ]]; do
-  case "$1" in
-    --mode) MODE="$2"; shift ;;
-    --project-id) GCP_PROJECT_ID="$2"; shift ;;
-    --target-type) TARGET_TYPE="$2"; shift ;;
-    --service-account-email) GCP_SERVICE_ACCOUNT_EMAIL="$2"; shift ;;
-    --ad-group-email) AD_GROUP_EMAIL="$2"; shift ;;
-    --roles-sa) IAM_ROLES_SA="$2"; shift ;;
-    --roles-ad) IAM_ROLES_AD="$2"; shift ;;
-    --bundled-roles-sa) BUNDLED_ROLES_SA="$2"; shift ;;
-    --bundled-roles-ad) BUNDLED_ROLES_AD="$2"; shift ;;
-    *) echo "Unknown parameter: $1" >&2; usage ;;
-  esac
-  shift
-done
-
-# --- Validation ---
-[[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$TARGET_TYPE" ]] && usage
-
-if [[ "$TARGET_TYPE" == "service_account" ]]; then
-  [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" ]] && usage
-  [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]] && usage
-elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
-  [[ -z "$AD_GROUP_EMAIL" ]] && usage
-  [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]] && usage
-else
-  usage
-fi
-
-# --- CLI Tool Checks ---
-command -v gcloud &>/dev/null || { echo "gcloud CLI is not installed."; exit 1; }
-command -v jq &>/dev/null || { echo "jq is not installed."; exit 1; }
-
-gcloud config set project "$GCP_PROJECT_ID" --quiet
-
-# --- Retrieve Current IAM Policy ---
-RAW_GCLOUD_OUTPUT=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json)
-CURRENT_POLICY_JSON=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
-MODIFIED_POLICY_JSON="$CURRENT_POLICY_JSON"
-
-# --- Functions ---
-get_bundled_roles() {
-  local bundle_name="$1"
-  case "$bundle_name" in
-    "GenAI_ADMIN") echo "roles/aiplatform.admin,roles/aiplatform.user,roles/notebooks.admin,roles/storage.admin,roles/bigquery.admin" ;;
-    "GenAI_DEVELOPER") echo "roles/aiplatform.user,roles/viewer,roles/bigquery.dataViewer,roles/storage.objectViewer" ;;
-    "CUSTOM_BUNDLE_1") echo "roles/compute.admin,roles/container.admin" ;;
-    *) echo "Unknown bundled role: $bundle_name" >&2; exit 1 ;;
-  esac
-}
-
-add_or_update_member() {
-  local policy="$1"
-  local role="$2"
-  local member_type="$3"
-  local email="$4"
-  local member="$member_type:$email"
-
-  if echo "$policy" | jq --arg role "$role" '.bindings[]? | select(.role == $role)' | grep -q .; then
-    if ! echo "$policy" | jq --arg role "$role" --arg member "$member" '.bindings[]? | select(.role == $role) | .members[]? | select(. == $member)' | grep -q .; then
-      echo "$policy" | jq --arg role "$role" --arg member "$member" '
-        .bindings |= map(
-          if .role == $role then .members += [$member] else . end
-        )'
-    else
-      echo "$policy"
-    fi
-  else
-    echo "$policy" | jq --arg role "$role" --arg member "$member" '
-      .bindings += [{role: $role, members: [$member]}]'
-  fi
-}
-
-# --- Collect Roles ---
-resolve_roles() {
-  local roles_input="$1"
-  local bundle="$2"
-  local resolved=""
-  [[ -n "$roles_input" ]] && resolved="$roles_input"
-  [[ -n "$bundle" ]] && resolved="${resolved:+$resolved,}$(get_bundled_roles "$bundle")"
-  echo "$resolved"
-}
-
-ALL_ROLES=""
-MEMBER_TYPE=""
-MEMBER_EMAIL=""
-
-if [[ "$TARGET_TYPE" == "service_account" ]]; then
-  ALL_ROLES=$(resolve_roles "$IAM_ROLES_SA" "$BUNDLED_ROLES_SA")
-  MEMBER_TYPE="serviceAccount"
-  MEMBER_EMAIL="$GCP_SERVICE_ACCOUNT_EMAIL"
-elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
-  ALL_ROLES=$(resolve_roles "$IAM_ROLES_AD" "$BUNDLED_ROLES_AD")
-  MEMBER_TYPE="group"
-  MEMBER_EMAIL="$AD_GROUP_EMAIL"
-fi
-
-IFS=',' read -ra ROLES_ARRAY <<< "$ALL_ROLES"
-for role in "${ROLES_ARRAY[@]}"; do
-  role=$(echo "$role" | xargs)
-  MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "$MEMBER_TYPE" "$MEMBER_EMAIL")
-done
-
-# --- Apply or Show ---
-if [[ "$MODE" == "dry-run" ]]; then
-  echo "-------------------------"
-  echo "DRY RUN - PROPOSED POLICY"
-  echo "-------------------------"
-  echo "$MODIFIED_POLICY_JSON" | jq .
-else
-  echo "Applying modified IAM policy to project $GCP_PROJECT_ID..."
-  echo "$MODIFIED_POLICY_JSON" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" -q --format=json -
-  echo "Policy successfully applied."
-fi
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#!/bin/bash
-set -euo pipefail
 # Uncomment the line below for extremely verbose debugging (shows every command executed)
 # set -x
 
@@ -194,15 +31,15 @@ usage() {
   echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
   echo ""
   echo "Arguments:"
-  echo "  --mode                  : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
-  echo "  --project-id            : The GCP Project ID."
-  echo "  --target-type           : The type of principal to assign roles to: 'service_account' or 'ad_group'."
+  echo "  --mode                      : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
+  echo "  --project-id                : The GCP Project ID."
+  echo "  --target-type               : The type of principal to assign roles to: 'service_account' or 'ad_group'."
   echo "  --service-account-email : (Required if --target-type is 'service_account') The email of the GCP Service Account."
-  echo "  --ad-group-email        : (Required if --target-type is 'ad_group') The email of the Active Directory Group (must be synced to GCP)."
-  echo "  --roles-sa              : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
-  echo "  --roles-ad              : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
-  echo "  --bundled-roles-sa      : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
-  echo "  --bundled-roles-ad      : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
+  echo "  --ad-group-email          : (Required if --target-type is 'ad_group') The email of the Active Directory Group (must be synced to GCP)."
+  echo "  --roles-sa                  : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
+  echo "  --roles-ad                  : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
+  echo "  --bundled-roles-sa          : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
+  echo "  --bundled-roles-ad          : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
   echo ""
   echo "Note: If --target-type is 'service_account', at least one of --roles-sa or --bundled-roles-sa must be provided."
   echo "Note: If --target-type is 'ad_group', at least one of --roles-ad or --bundled-roles-ad must be provided."
@@ -280,6 +117,7 @@ if [[ "$TARGET_TYPE" == "service_account" ]]; then
   fi
   if [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]]; then
     echo "Error: At least one of --roles-sa or --bundled-roles-sa must be provided for the Service Account." >&2
+    echo "This is required to ensure that there's always at least one role to process." >&2
     usage
   fi
 elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
@@ -289,6 +127,7 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
   fi
   if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
     echo "Error: At least one of --roles-ad or --bundled-roles-ad must be provided for the AD Group." >&2
+    echo "This is required to ensure that there's always at least one role to process." >&2
     usage
   fi
 fi
@@ -332,10 +171,10 @@ echo "Fetching current IAM policy for project $GCP_PROJECT_ID with debug verbosi
 # IMPORTANT: Filter output to ensure only JSON is passed to jq.
 # This sed command extracts content from the first '{' to the last '}'.
 RAW_GCLOUD_OUTPUT=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --verbosity=debug 2> >(tee /dev/stderr))
-CURRENT_POLICY_JSON=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
+CURRENT_POLICY_JSON_RAW=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
 
 
-if [[ -z "$CURRENT_POLICY_JSON" ]]; then
+if [[ -z "$CURRENT_POLICY_JSON_RAW" ]]; then
   echo "Error: Failed to retrieve or parse current IAM policy for project '$GCP_PROJECT_ID'." >&2
   echo "This often indicates one of the following:" >&2
   echo "  1. The Project ID is incorrect or does not exist." >&2
@@ -346,14 +185,54 @@ if [[ -z "$CURRENT_POLICY_JSON" ]]; then
   exit 1
 fi
 
-# --- DEBUGGING STEP ADDED HERE ---
-echo "--- DEBUG: Content of CURRENT_POLICY_JSON before jq parsing (after sed filter) ---"
+# --- NEW: JSON Cleanup Function ---
+# This function attempts to fix common JSON parsing issues like semicolons instead of colons.
+cleanup_malformed_json() {
+  local input_json="$1"
+  local cleaned_json=""
+
+  echo "Attempting to clean up potentially malformed JSON policy..."
+  # Replace semicolons with colons. This is the primary fix for your observed error.
+  # Using `sed` to replace `;` with `:` specifically in places where it's likely
+  # a key-value separator, assuming simple `"`key"` ;` value` or `"`key"` ;` [` structure.
+  # This pattern tries to be precise but might need adjustment for other specific malformations.
+  cleaned_json=$(echo "$input_json" | sed -E 's/("[^"]+")\s*;\s*/\1: /g')
+
+  # You can add more cleanup steps here if other common issues are found:
+  # Example: Remove trailing commas before closing braces/brackets (requires more complex sed or external tool)
+  # cleaned_json=$(echo "$cleaned_json" | sed -E 's/,\s*([}\]])/\1/g') # This is simple, might not catch all cases
+
+  # Attempt to parse the cleaned JSON with jq to ensure it's now valid.
+  # This also pretty-prints it. If it fails, jq will output an error to stderr.
+  local validated_json=$(echo "$cleaned_json" | jq --raw-output '.' 2> >(tee /dev/stderr))
+  local jq_exit_code=$?
+
+  if [[ $jq_exit_code -ne 0 ]]; then
+    echo "Warning: Even after basic cleanup, the JSON policy is still malformed or jq failed to parse it." >&2
+    echo "Proceeding with the best-effort cleaned JSON. This might lead to further errors." >&2
+    # If jq still fails, return the `sed`-cleaned version,
+    # hoping subsequent jq commands can handle it with some tolerance or fail gracefully.
+    echo "$cleaned_json"
+  else
+    echo "JSON policy cleanup successful. Policy is now valid JSON."
+    echo "$validated_json"
+  fi
+}
+
+# --- Apply Cleanup ---
+echo "--- DEBUG: Raw JSON from gcloud (before cleanup) ---"
+echo "$CURRENT_POLICY_JSON_RAW"
+echo "--- END RAW DEBUG ---"
+
+CURRENT_POLICY_JSON=$(cleanup_malformed_json "$CURRENT_POLICY_JSON_RAW")
+
+echo "--- DEBUG: Content of CURRENT_POLICY_JSON after cleanup and before jq parsing (after sed filter) ---"
 echo "$CURRENT_POLICY_JSON"
 echo "--- END DEBUG ---"
-# --- END DEBUGGING STEP ---
+# --- END NEW: JSON Cleanup ---
 
 
-echo "Current policy fetched successfully."
+echo "Current policy fetched and cleaned successfully."
 
 # Initialize MODIFIED_POLICY_JSON with the current policy.
 # We will manipulate this JSON object using jq.
@@ -382,8 +261,8 @@ add_or_update_member() {
   # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
   local role_exists_check=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
   local jq_exit_code=$?
-  if [[ $jq_exit_code -ne 0 && -n "$policy_json_input" ]]; then
-    echo "  ERROR: jq failed to check for existing role binding for role '$role'. Input might be malformed." >&2
+  if [[ $jq_exit_code -ne 0 ]]; then # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
+    echo "  ERROR: jq failed to check for existing role binding for role '$role'. Input might still be malformed or jq expression is faulty." >&2
     echo "  DEBUG: jq command: echo \"\$policy_json_input\" | jq --arg role \"$role\" '.bindings[] | select(.role == \$role)'" >&2
     exit 1 # Exit script if jq fails here
   fi
@@ -402,11 +281,11 @@ add_or_update_member() {
     ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
     jq_exit_code=$?
     if [[ $jq_exit_code -ne 0 ]]; then
-      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >&2
+      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >2
       exit 1 # Exit script if jq fails here
     fi
     if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >2
       exit 1
     fi
   else
@@ -415,8 +294,8 @@ add_or_update_member() {
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
     ' 2>/dev/null) # Redirect stderr to /dev/null for this check
     jq_exit_code=$?
-    if [[ $jq_exit_code -ne 0 && -n "$policy_json_input" ]]; then
-      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might be malformed." >&2
+    if [[ $jq_exit_code -ne 0 ]]; # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
+      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might still be malformed or jq expression is faulty." >2
       exit 1 # Exit script if jq fails here
     fi
 
@@ -435,11 +314,11 @@ add_or_update_member() {
       ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
       jq_exit_code=$?
       if [[ $jq_exit_code -ne 0 ]]; then
-        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >&2
+        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >2
         exit 1 # Exit script if jq fails here
       fi
       if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >2
         exit 1
       fi
     else
@@ -519,7 +398,7 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
       ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
     else
       ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
-    fi
+    Xfi
   fi
 
   if [[ -n "$ALL_AD_ROLES" ]]; then
