@@ -281,11 +281,11 @@ add_or_update_member() {
     ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
     jq_exit_code=$?
     if [[ $jq_exit_code -ne 0 ]]; then
-      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >2
+      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >&2
       exit 1 # Exit script if jq fails here
     fi
     if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >2
+      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
       exit 1
     fi
   else
@@ -294,8 +294,8 @@ add_or_update_member() {
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
     ' 2>/dev/null) # Redirect stderr to /dev/null for this check
     jq_exit_code=$?
-    if [[ $jq_exit_code -ne 0 ]]; # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
-      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might still be malformed or jq expression is faulty." >2
+    if [[ $jq_exit_code -ne 0 ]]; then # Do not check -n "$policy_json_input" here as it's passed from a cleaned source
+      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might still be malformed or jq expression is faulty." >&2
       exit 1 # Exit script if jq fails here
     fi
 
@@ -314,11 +314,11 @@ add_or_update_member() {
       ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
       jq_exit_code=$?
       if [[ $jq_exit_code -ne 0 ]]; then
-        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >2
+        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >&2
         exit 1 # Exit script if jq fails here
       fi
       if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >2
+        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
         exit 1
       fi
     else
@@ -398,7 +398,7 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
       ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
     else
       ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
-    Xfi
+    fi # <--- This `fi` was previously `Xfi`
   fi
 
   if [[ -n "$ALL_AD_ROLES" ]]; then
