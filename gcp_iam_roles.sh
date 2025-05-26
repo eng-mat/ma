@@ -16,7 +16,7 @@ MODE=""
 GCP_PROJECT_ID=""
 TARGET_TYPE=""            # "service_account" or "ad_group"
 GCP_SERVICE_ACCOUNT_EMAIL="" # Only relevant if TARGET_TYPE is "service_account"
-AD_GROUP_EMAIL=""         # Only relevant if TARGET_TYPE is "ad_group"
+AD_GROUP_EMAIL=""         # Only relevant if "ad_group"
 IAM_ROLES_SA=""           # Comma-separated list of individual roles for the Service Account
 IAM_ROLES_AD=""           # Comma-separated list of individual roles for the AD Group
 BUNDLED_ROLES_SA=""       # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
@@ -185,45 +185,53 @@ if [[ -z "$CURRENT_POLICY_JSON_RAW" ]]; then
   exit 1
 fi
 
-# --- NEW: JSON Cleanup Function (More Robust) ---
+# --- UPDATED: JSON Cleanup Function (More Robust Error Handling) ---
 cleanup_malformed_json() {
   local input_json="$1"
   local cleaned_json=""
+  local jq_output=""
+  local jq_exit_code=""
 
   echo "Attempting to clean up potentially malformed JSON policy (semicolons to colons)..."
   # Attempt initial fix: replace semicolons with colons
   cleaned_json=$(echo "$input_json" | sed -E 's/("[^"]+")\s*;\s*/\1: /g')
 
-  # Validate the cleaned JSON with jq. If jq fails, it means the structure is still invalid.
-  local validated_json_output
-  validated_json_output=$(echo "$cleaned_json" | jq --raw-output '.' 2> >(tee /dev/stderr))
-  local jq_exit_code=$?
+  echo "DEBUG: Attempting JQ validation and pretty-print on cleaned JSON."
+  echo "DEBUG: Cleaned JSON for JQ validation:"
+  echo "$cleaned_json"
+  echo "DEBUG: End of Cleaned JSON for JQ validation."
+
+  # Attempt to parse and pretty-print with jq.
+  # Capture both stdout (the pretty JSON) and stderr (jq errors)
+  jq_output=$(echo "$cleaned_json" | jq --raw-output '.' 2>&1) # Redirect stderr to stdout for capture
+  jq_exit_code=$?
 
   if [[ $jq_exit_code -ne 0 ]]; then
-    echo "ERROR: JSON policy is still malformed after basic semicolon cleanup. JQ failed to parse it." >&2
-    echo "Input to JQ before fatal error (likely problematic):" >&2
-    echo "$cleaned_json" >&2
-    # At this point, the JSON is fundamentally broken beyond simple fixes.
-    # We must exit, as attempting to proceed will lead to further jq errors.
-    exit 1
+    echo "ERROR: JQ failed to parse the JSON policy even after basic semicolon cleanup." >&2
+    echo "This indicates a more fundamental JSON malformation (e.g., truncation, unmatched braces/quotes)." >&2
+    echo "JQ's error message (from stderr):" >&2
+    echo "$jq_output" >&2 # jq_output now contains the error message from jq
+    echo "The problematic JSON input that JQ tried to parse was:" >&2
+    echo "$cleaned_json" | head -n 40 >&2 # show first 40 lines to keep logs readable
+    echo "..." >&2
+    exit 1 # Script must exit as we cannot safely proceed with malformed JSON
   else
     echo "JSON policy cleanup successful. Policy is now valid JSON."
-    echo "$validated_json_output" # Return the valid JSON
+    echo "$jq_output" # Return the valid, pretty-printed JSON
   fi
 }
 
 # --- Apply Cleanup ---
 echo "--- DEBUG: Raw JSON from gcloud (before cleanup) ---"
-echo "$CURRENT_POLICY_JSON_RAW"
+echo "$RAW_GCLOUD_OUTPUT" # Changed to RAW_GCLOUD_OUTPUT to see full original
 echo "--- END RAW DEBUG ---"
 
 # Call the cleanup function. It will exit if JSON is still malformed.
 CURRENT_POLICY_JSON=$(cleanup_malformed_json "$CURRENT_POLICY_JSON_RAW")
 
-echo "--- DEBUG: Content of CURRENT_POLICY_JSON after cleanup and before jq parsing (after sed filter) ---"
+echo "--- DEBUG: Content of CURRENT_POLICY_JSON after cleanup and before final ops ---"
 echo "$CURRENT_POLICY_JSON"
 echo "--- END DEBUG ---"
-# --- END NEW: JSON Cleanup ---
 
 
 echo "Current policy fetched and cleaned successfully."
@@ -253,30 +261,42 @@ add_or_update_member() {
 
   # Crucial Check: Ensure policy_json_input is not empty/malformed before passing to jq
   if [[ -z "$policy_json_input" ]]; then
-    echo "  FATAL ERROR: Input JSON to add_or_update_member is empty or invalid. Exiting." >&2
+    echo "  FATAL ERROR: Input JSON to add_or_update_member is empty. Exiting." >&2
     exit 1
   fi
+  # Use jq -e '.' to validate JSON. It returns 0 for valid JSON, 1 for invalid.
   if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
-    echo "  FATAL ERROR: Input JSON to add_or_update_member is not valid JSON. Exiting." >&2
-    echo "  Problematic JSON: '$policy_json_input'" >&2
+    echo "  FATAL ERROR: Input JSON to add_or_update_member is not valid JSON." >&2
+    echo "  Problematic JSON for jq validation in add_or_update_member:" >&2
+    echo "$policy_json_input" | head -n 40 >&2
+    echo "..." >&2
     exit 1
   fi
 
 
   # Check if a binding for this specific role already exists in the policy.
-  # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
-  local role_exists_check=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
+  # Use `jq -e` for robust checking. If it matches nothing, it exits non-zero, but that's okay.
+  # If it's a parsing error, it will exit non-zero and print to stderr.
+  local role_exists_check_output
+  role_exists_check_output=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>&1)
   local jq_exit_code=$?
+
   if [[ $jq_exit_code -ne 0 ]]; then
-    # This might happen if 'bindings' array is missing or empty, which jq handles.
-    # The jq error itself (if any) would have been printed to stderr by `tee`.
-    # We only exit if there's a critical parse error here, not just 'no match'.
-    if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
-        echo "  ERROR: jq failed to check for existing role binding for role '$role' due to invalid input JSON." >&2
-        echo "  Check the output above for jq's error message." >&2
+    # If jq failed to parse the JSON *here*, then there's a problem.
+    # We already validated input JSON, so this usually means 'bindings' is missing or empty,
+    # which results in a non-zero exit but not a parse error.
+    if [[ "$role_exists_check_output" == "parse error"* ]]; then
+        echo "  ERROR: jq failed to check for existing role binding for role '$role' due to a parse error." >&2
+        echo "  JQ Output (likely error): $role_exists_check_output" >&2
         exit 1 # Exit script if jq fails here
     fi
-    # If jq returned non-zero but the input was valid JSON, it means no matching role was found, which is fine.
+    # If jq_exit_code is non-zero but not a parse error, it means no match was found, which is intended.
+    # So, continue to add a new binding.
+    # Set role_exists_check to empty to trigger the "add new binding" path
+    role_exists_check=""
+  else
+    # Role exists, capture the actual output if needed, but for now we just care if it found something
+    role_exists_check="$role_exists_check_output"
   fi
 
 
@@ -290,10 +310,10 @@ add_or_update_member() {
         # Condition is explicitly omitted as per requirement ("set the role condition to none").
         # gcloud prefers 'condition' to be absent if no condition is needed, rather than 'null'.
       }]
-    ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
+    ' 2>&1) # Redirect jq errors to stdout for capture
     jq_exit_code=$?
     if [[ $jq_exit_code -ne 0 ]]; then
-      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >&2
+      echo "  ERROR: jq failed to add new binding for role '$role'. JQ Output: $temp_policy_json" >&2
       exit 1 # Exit script if jq fails here
     fi
     if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
@@ -302,16 +322,21 @@ add_or_update_member() {
     fi
   else
     # If the role binding exists, check if the member is already part of this binding.
-    local member_in_role_check=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
+    local member_in_role_check_output
+    member_in_role_check_output=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
-    ' 2>/dev/null) # Redirect stderr to /dev/null for this check
+    ' 2>&1) # Redirect stderr to stdout for capture
     jq_exit_code=$?
+
     if [[ $jq_exit_code -ne 0 ]]; then
-        if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
-            echo "  ERROR: jq failed to check for existing member in role '$role' due to invalid input JSON." >&2
-            echo "  Check the output above for jq's error message." >&2
+        if [[ "$member_in_role_check_output" == "parse error"* ]]; then
+            echo "  ERROR: jq failed to check for existing member in role '$role' due to a parse error." >&2
+            echo "  JQ Output (likely error): $member_in_role_check_output" >&2
             exit 1 # Exit script if jq fails here
         fi
+        member_in_role_check="" # No match or other non-error failure (e.g., empty array)
+    else
+        member_in_role_check="$member_in_role_check_output"
     fi
 
     if [[ -z "$member_in_role_check" ]]; then
@@ -326,10 +351,10 @@ add_or_update_member() {
             . # Keep other bindings unchanged
           end
         )
-      ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
+      ' 2>&1) # Redirect jq errors to stdout for capture
       jq_exit_code=$?
       if [[ $jq_exit_code -ne 0 ]]; then
-        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >&2
+        echo "  ERROR: jq failed to add member to existing role '$role'. JQ Output: $temp_policy_json" >&2
         exit 1 # Exit script if jq fails here
       fi
       if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
