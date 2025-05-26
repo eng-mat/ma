@@ -2,19 +2,17 @@
 set -euo pipefail
 
 # assign_iam_roles.sh
-# This script automates assigning IAM roles to a Google Service Account or an Active Directory Group
+# This script automates assigning IAM roles to a Google Service Account and/or an Active Directory Group
 # within a GCP project. It supports dry-run and apply modes.
 # It uses ETags for optimistic concurrency control and ensures no role conditions are set.
-# This version adds support for optional bundled IAM roles (job functions) and allows selecting
-# the target (Service Account or AD Group) via a dropdown.
+# This version allows assigning roles to a Service Account, an AD Group, or both in a single run.
 
 # --- Configuration and Argument Parsing ---
 
 MODE=""
 GCP_PROJECT_ID=""
-TARGET_TYPE=""            # "service_account" or "ad_group"
-GCP_SERVICE_ACCOUNT_EMAIL="" # Only relevant if TARGET_TYPE is "service_account"
-AD_GROUP_EMAIL=""         # Only relevant if TARGET_TYPE is "ad_group"
+GCP_SERVICE_ACCOUNT_EMAIL="" # Optional: Email of the Service Account
+AD_GROUP_EMAIL=""         # Optional: Email of the AD Group
 IAM_ROLES_SA=""           # Comma-separated list of individual roles for the Service Account
 IAM_ROLES_AD=""           # Comma-separated list of individual roles for the AD Group
 BUNDLED_ROLES_SA=""       # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
@@ -23,7 +21,6 @@ BUNDLED_ROLES_AD=""       # Name of bundled role for AD Group (e.g., "GenAI_DEVE
 # Function to display usage information
 usage() {
   echo "Usage: $0 --mode <dry-run|apply> --project-id <GCP_PROJECT_ID> \\"
-  echo "          --target-type <service_account|ad_group> \\"
   echo "          [--service-account-email <SA_EMAIL>] [--ad-group-email <AD_GROUP_EMAIL>] \\"
   echo "          [--roles-sa <ROLE1,ROLE2>] [--roles-ad <ROLE1,ROLE2>] \\"
   echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
@@ -31,16 +28,16 @@ usage() {
   echo "Arguments:"
   echo "  --mode                  : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
   echo "  --project-id            : The GCP Project ID."
-  echo "  --target-type           : The type of principal to assign roles to: 'service_account' or 'ad_group'."
-  echo "  --service-account-email : (Required if --target-type is 'service_account') The email of the GCP Service Account."
-  echo "  --ad-group-email        : (Required if --target-type is 'ad_group') The email of the Active Directory Group (must be synced to GCP)."
-  echo "  --roles-sa              : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
-  echo "  --roles-ad              : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
-  echo "  --bundled-roles-sa      : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
-  echo "  --bundled-roles-ad      : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
+  echo "  --service-account-email : (Optional) The email of the GCP Service Account to assign roles to."
+  echo "  --ad-group-email        : (Optional) The email of the Active Directory Group to assign roles to (must be synced to GCP)."
+  echo "  --roles-sa              : (Optional, used if --service-account-email is provided) Comma-separated individual IAM roles for the Service Account."
+  echo "  --roles-ad              : (Optional, used if --ad-group-email is provided) Comma-separated individual IAM roles for the AD Group."
+  echo "  --bundled-roles-sa      : (Optional, used if --service-account-email is provided) Name of a predefined bundled role for the Service Account."
+  echo "  --bundled-roles-ad      : (Optional, used if --ad-group-email is provided) Name of a predefined bundled role for the AD Group."
   echo ""
-  echo "Note: If --target-type is 'service_account', at least one of --roles-sa or --bundled-roles-sa must be provided."
-  echo "Note: If --target-type is 'ad_group', at least one of --roles-ad or --bundled-roles-ad must be provided."
+  echo "Note: At least one of --service-account-email or --ad-group-email must be provided."
+  echo "Note: If --service-account-email is provided, at least one of --roles-sa or --bundled-roles-sa must also be provided."
+  echo "Note: If --ad-group-email is provided, at least one of --roles-ad or --bundled-roles-ad must also be provided."
   exit 1
 }
 
@@ -53,10 +50,6 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --project-id)
       GCP_PROJECT_ID="$2"
-      shift
-      ;;
-    --target-type)
-      TARGET_TYPE="$2"
       shift
       ;;
     --service-account-email)
@@ -91,9 +84,9 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
-# --- Validate required arguments based on target type ---
-if [[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$TARGET_TYPE" ]]; then
-  echo "Error: --mode, --project-id, and --target-type are required."
+# --- Validate required arguments ---
+if [[ -z "$MODE" || -z "$GCP_PROJECT_ID" ]]; then
+  echo "Error: --mode and --project-id are required."
   usage
 fi
 
@@ -102,43 +95,37 @@ if [[ "$MODE" != "dry-run" && "$MODE" != "apply" ]]; then
   usage
 fi
 
-if [[ "$TARGET_TYPE" != "service_account" && "$TARGET_TYPE" != "ad_group" ]]; then
-  echo "Error: --target-type must be 'service_account' or 'ad_group'."
+# At least one target (SA or AD Group) must be provided
+if [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" && -z "$AD_GROUP_EMAIL" ]]; then
+  echo "Error: At least one of --service-account-email or --ad-group-email must be provided."
   usage
 fi
 
-if [[ "$TARGET_TYPE" == "service_account" ]]; then
-  if [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" ]]; then
-    echo "Error: --service-account-email is required when --target-type is 'service_account'."
-    usage
-  fi
+# Validate roles for Service Account if provided
+if [[ -n "$GCP_SERVICE_ACCOUNT_EMAIL" ]]; then
   if [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]]; then
-    echo "Error: At least one of --roles-sa or --bundled-roles-sa must be provided for the Service Account."
-    usage
-  fi
-elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
-  if [[ -z "$AD_GROUP_EMAIL" ]]; then
-    echo "Error: --ad-group-email is required when --target-type is 'ad_group'."
-    usage
-  fi
-  if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
-    echo "Error: At least one of --roles-ad or --bundled-roles-ad must be provided for the AD Group."
+    echo "Error: If --service-account-email is provided, at least one of --roles-sa or --bundled-roles-sa must also be provided."
     usage
   fi
 fi
 
+# Validate roles for AD Group if provided
+if [[ -n "$AD_GROUP_EMAIL" ]]; then
+  if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
+    echo "Error: If --ad-group-email is provided, at least one of --roles-ad or --bundled-roles-ad must also be provided."
+    usage
+  fi
+fi
+
+
 echo "--- Starting IAM Role Assignment Script ($MODE mode) ---"
 echo "Project ID: $GCP_PROJECT_ID"
-echo "Target Type: $TARGET_TYPE"
-if [[ "$TARGET_TYPE" == "service_account" ]]; then
-  echo "Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
-  echo "Individual Roles for SA: ${IAM_ROLES_SA:-None}"
-  echo "Bundled Role for SA: ${BUNDLED_ROLES_SA:-None}"
-elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
-  echo "AD Group: $AD_GROUP_EMAIL"
-  echo "Individual Roles for AD Group: ${IAM_ROLES_AD:-None}"
-  echo "Bundled Role for AD Group: ${BUNDLED_ROLES_AD:-None}"
-fi
+echo "Service Account: ${GCP_SERVICE_ACCOUNT_EMAIL:-None}"
+echo "AD Group: ${AD_GROUP_EMAIL:-None}"
+echo "Individual Roles for SA: ${IAM_ROLES_SA:-None}"
+echo "Bundled Role for SA: ${BUNDLED_ROLES_SA:-None}"
+echo "Individual Roles for AD Group: ${IAM_ROLES_AD:-None}"
+echo "Bundled Role for AD Group: ${BUNDLED_ROLES_AD:-None}"
 echo "------------------------------------------------------"
 
 # --- Pre-checks and Setup ---
@@ -252,8 +239,8 @@ add_or_update_member() {
   echo "$policy_json" # Return the modified policy JSON
 }
 
-# --- Process Roles based on TARGET_TYPE ---
-if [[ "$TARGET_TYPE" == "service_account" ]]; then
+# --- Process Roles for Service Account if provided ---
+if [[ -n "$GCP_SERVICE_ACCOUNT_EMAIL" ]]; then
   ALL_SA_ROLES=""
   if [[ -n "$IAM_ROLES_SA" ]]; then
     ALL_SA_ROLES="$IAM_ROLES_SA"
@@ -282,7 +269,10 @@ if [[ "$TARGET_TYPE" == "service_account" ]]; then
   else
     echo "No roles specified for Service Account. Skipping."
   fi
-elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+fi
+
+# --- Process Roles for AD Group if provided ---
+if [[ -n "$AD_GROUP_EMAIL" ]]; then
   ALL_AD_ROLES=""
   if [[ -n "$IAM_ROLES_AD" ]]; then
     ALL_AD_ROLES="$IAM_ROLES_AD"
