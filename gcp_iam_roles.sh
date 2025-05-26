@@ -211,11 +211,13 @@ add_or_update_member() {
   local temp_policy_json="" # To hold intermediate jq results
 
   echo "  --- Entering add_or_update_member for role '$role', member '$member_string' ---"
-  echo "  DEBUG: Input policy_json_input (first 200 chars): ${policy_json_input:0:200}..."
+  echo "  DEBUG: Input policy_json_input (full content):"
+  echo "$policy_json_input" # Print full input JSON for thorough debugging
+  echo "  DEBUG: End of Input policy_json_input"
 
   # Check if a binding for this specific role already exists in the policy.
   # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
-  local role_exists=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
+  local role_exists_check=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
   local jq_exit_code=$?
   if [[ $jq_exit_code -ne 0 && -n "$policy_json_input" ]]; then
     echo "  ERROR: jq failed to check for existing role binding for role '$role'. Input might be malformed." >&2
@@ -224,7 +226,7 @@ add_or_update_member() {
   fi
 
 
-  if [[ -z "$role_exists" ]]; then
+  if [[ -z "$role_exists_check" ]]; then
     # If the role binding does not exist, add a new binding for this role and member.
     echo "  Adding new binding for role '$role' with member '$member_string'."
     temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
@@ -240,9 +242,13 @@ add_or_update_member() {
       echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >&2
       exit 1 # Exit script if jq fails here
     fi
+    if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
+      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+      exit 1
+    fi
   else
     # If the role binding exists, check if the member is already part of this binding.
-    local member_in_role=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
+    local member_in_role_check=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
     ' 2>/dev/null) # Redirect stderr to /dev/null for this check
     jq_exit_code=$?
@@ -251,7 +257,7 @@ add_or_update_member() {
       exit 1 # Exit script if jq fails here
     fi
 
-    if [[ -z "$member_in_role" ]]; then
+    if [[ -z "$member_in_role_check" ]]; then
       # If the member is not in the existing role binding, add them.
       echo "  Adding member '$member_string' to existing role '$role'."
       temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
@@ -269,12 +275,18 @@ add_or_update_member() {
         echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >&2
         exit 1 # Exit script if jq fails here
       fi
+      if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
+        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+        exit 1
+      fi
     else
       echo "  Member '$member_string' already exists in role '$role'. Skipping."
       temp_policy_json="$policy_json_input" # No change, so keep original
     fi
   fi
-  echo "  DEBUG: Output policy_json (first 200 chars): ${temp_policy_json:0:200}..."
+  echo "  DEBUG: Output policy_json (full content):"
+  echo "$temp_policy_json" # Print full output JSON for thorough debugging
+  echo "  DEBUG: End of Output policy_json"
   echo "  --- Exiting add_or_update_member ---"
   echo "$temp_policy_json" # Return the modified policy JSON
 }
