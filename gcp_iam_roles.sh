@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+# Uncomment the line below for extremely verbose debugging (shows every command executed)
+# set -x
 
 # assign_iam_roles.sh
 # This script automates assigning IAM roles to a Google Service Account or an Active Directory Group
@@ -84,7 +86,7 @@ while [[ "$#" -gt 0 ]]; do
       shift
       ;;
     *)
-      echo "Unknown parameter: $1"
+      echo "Unknown parameter: $1" >&2
       usage
       ;;
   esac
@@ -92,40 +94,42 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # --- Validate required arguments based on target type ---
+echo "Validating script arguments..."
 if [[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$TARGET_TYPE" ]]; then
-  echo "Error: --mode, --project-id, and --target-type are required."
+  echo "Error: --mode, --project-id, and --target-type are required." >&2
   usage
 fi
 
 if [[ "$MODE" != "dry-run" && "$MODE" != "apply" ]]; then
-  echo "Error: --mode must be 'dry-run' or 'apply'."
+  echo "Error: --mode must be 'dry-run' or 'apply'." >&2
   usage
 fi
 
 if [[ "$TARGET_TYPE" != "service_account" && "$TARGET_TYPE" != "ad_group" ]]; then
-  echo "Error: --target-type must be 'service_account' or 'ad_group'."
+  echo "Error: --target-type must be 'service_account' or 'ad_group'." >&2
   usage
 fi
 
 if [[ "$TARGET_TYPE" == "service_account" ]]; then
   if [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" ]]; then
-    echo "Error: --service-account-email is required when --target-type is 'service_account'."
+    echo "Error: --service-account-email is required when --target-type is 'service_account'." >&2
     usage
   fi
   if [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]]; then
-    echo "Error: At least one of --roles-sa or --bundled-roles-sa must be provided for the Service Account."
+    echo "Error: At least one of --roles-sa or --bundled-roles-sa must be provided for the Service Account." >&2
     usage
   fi
 elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
   if [[ -z "$AD_GROUP_EMAIL" ]]; then
-    echo "Error: --ad-group-email is required when --target-type is 'ad_group'."
+    echo "Error: --ad-group-email is required when --target-type is 'ad_group'." >&2
     usage
   fi
   if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
-    echo "Error: At least one of --roles-ad or --bundled-roles-ad must be provided for the AD Group."
+    echo "Error: At least one of --roles-ad or --bundled-roles-ad must be provided for the AD Group." >&2
     usage
   fi
 fi
+echo "Script arguments validated successfully."
 
 echo "--- Starting IAM Role Assignment Script ($MODE mode) ---"
 echo "Project ID: $GCP_PROJECT_ID"
@@ -145,52 +149,41 @@ echo "------------------------------------------------------"
 
 # Check for gcloud and jq CLI tools
 if ! command -v gcloud &> /dev/null; then
-  echo "Error: gcloud CLI not found. Please ensure it's installed and in your PATH."
+  echo "Error: gcloud CLI not found. Please ensure it's installed and in your PATH." >&2
   exit 1
 fi
 if ! command -v jq &> /dev/null; then
-  echo "Error: jq not found. Please ensure it's installed (e.g., sudo apt-get install jq or brew install jq)."
+  echo "Error: jq not found. Please ensure it's installed (e.g., sudo apt-get install jq or brew install jq)." >&2
   exit 1
 fi
 
 echo "Setting gcloud project to $GCP_PROJECT_ID..."
 # Set the gcloud project context for subsequent commands
-gcloud config set project "$GCP_PROJECT_ID" --quiet
+# Capture stderr to identify potential gcloud errors
+gcloud config set project "$GCP_PROJECT_ID" --quiet 2> >(tee /dev/stderr) || { echo "Error: Failed to set gcloud project context. This might indicate an invalid Project ID: '$GCP_PROJECT_ID'." >&2; exit 1; }
+echo "Gcloud project set to $GCP_PROJECT_ID."
 
-# --- Function to resolve bundled roles ---
-# This function takes a bundled role name and returns a comma-separated string of actual IAM roles.
-get_bundled_roles() {
-  local bundle_name="$1"
-  local roles=""
-  case "$bundle_name" in
-    "GenAI_ADMIN")
-      roles="roles/aiplatform.admin,roles/aiplatform.user,roles/notebooks.admin,roles/storage.admin,roles/bigquery.admin"
-      ;;
-    "GenAI_DEVELOPER")
-      roles="roles/aiplatform.user,roles/viewer,roles/bigquery.dataViewer,roles/storage.objectViewer"
-      ;;
-    # Add more bundled roles here as needed
-    "CUSTOM_BUNDLE_1")
-      roles="roles/compute.admin,roles/container.admin"
-      ;;
-    *)
-      echo "Error: Unknown bundled role name: '$bundle_name'. Please check the script's 'get_bundled_roles' function." >&2
-      exit 1
-      ;;
-  esac
-  echo "$roles"
-}
-
-# --- Core Logic: Get, Modify, Set IAM Policy ---
-
-echo "Fetching current IAM policy for project $GCP_PROJECT_ID..."
-# Retrieve the current IAM policy in JSON format
-CURRENT_POLICY_JSON=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json)
+echo "Fetching current IAM policy for project $GCP_PROJECT_ID with debug verbosity..."
+# Retrieve the current IAM policy in JSON format with debug logging
+# Capture stderr to identify potential gcloud errors, even if it exits 0
+CURRENT_POLICY_JSON=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --verbosity=debug 2> >(tee /dev/stderr))
 
 if [[ -z "$CURRENT_POLICY_JSON" ]]; then
-  echo "Error: Failed to retrieve current IAM policy for project $GCP_PROJECT_ID."
+  echo "Error: Failed to retrieve current IAM policy for project '$GCP_PROJECT_ID'." >&2
+  echo "This often indicates one of the following:" >&2
+  echo "  1. The Project ID is incorrect or does not exist." >&2
+  echo "  2. The Workload Identity Federation (WIF) executor service account ('${WIF_EXECUTOR_SA_EMAIL:-N/A}') does not have sufficient permissions (e.g., roles/resourcemanager.projectIamViewer) on project '$GCP_PROJECT_ID'." >&2
+  echo "  3. The Workload Identity Federation authentication itself failed." >&2
+  echo "Review the debug output above for more clues." >&2
   exit 1
 fi
+
+# --- DEBUGGING STEP ADDED HERE ---
+echo "--- DEBUG: Content of CURRENT_POLICY_JSON before jq parsing ---"
+echo "$CURRENT_POLICY_JSON"
+echo "--- END DEBUG ---"
+# --- END DEBUGGING STEP ---
+
 
 echo "Current policy fetched successfully."
 
@@ -250,6 +243,30 @@ add_or_update_member() {
     fi
   fi
   echo "$policy_json" # Return the modified policy JSON
+}
+
+# --- Function to resolve bundled roles ---
+# This function takes a bundled role name and returns a comma-separated string of actual IAM roles.
+get_bundled_roles() {
+  local bundle_name="$1"
+  local roles=""
+  case "$bundle_name" in
+    "GenAI_ADMIN")
+      roles="roles/aiplatform.admin,roles/aiplatform.user,roles/notebooks.admin,roles/storage.admin,roles/bigquery.admin"
+      ;;
+    "GenAI_DEVELOPER")
+      roles="roles/aiplatform.user,roles/viewer,roles/bigquery.dataViewer,roles/storage.objectViewer"
+      ;;
+    # Add more bundled roles here as needed
+    "CUSTOM_BUNDLE_1")
+      roles="roles/compute.admin,roles/container.admin"
+      ;;
+    *)
+      echo "Error: Unknown bundled role name: '$bundle_name'. Please check the script's 'get_bundled_roles' function." >&2
+      exit 1
+      ;;
+  esac
+  echo "$roles"
 }
 
 # --- Process Roles based on TARGET_TYPE ---
@@ -324,11 +341,11 @@ if [[ "$MODE" == "dry-run" ]]; then
   # Exit with 0 to indicate success for GitHub Actions
   exit 0
 elif [[ "$MODE" == "apply" ]]; then
-  echo "Applying modified IAM policy to project $GCP_PROJECT_ID..."
+  echo "Applying modified IAM policy to project $GCP_PROJECT_ID with debug verbosity..."
   # Extract the ETag from the original policy. This is crucial for optimistic concurrency.
   ETAG=$(echo "$CURRENT_POLICY_JSON" | jq -r '.etag')
   if [[ -z "$ETAG" ]]; then
-    echo "Error: ETag not found in current policy. Cannot apply changes safely without an ETag."
+    echo "Error: ETag not found in current policy. Cannot apply changes safely without an ETag. This might indicate an issue with fetching the initial policy." >&2
     exit 1
   fi
 
@@ -337,10 +354,13 @@ elif [[ "$MODE" == "apply" ]]; then
   FINAL_POLICY_TO_APPLY=$(echo "$MODIFIED_POLICY_JSON" | jq --arg etag "$ETAG" '.etag = $etag')
 
   # Apply the policy using gcloud. We pipe the JSON directly to stdin.
-  APPLY_RESULT=$(echo "$FINAL_POLICY_TO_APPLY" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" --policy-file=/dev/stdin --format=json)
+  # Capture stderr to identify potential gcloud errors
+  APPLY_RESULT=$(echo "$FINAL_POLICY_TO_APPLY" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" --policy-file=/dev/stdin --format=json --verbosity=debug 2> >(tee /dev/stderr))
 
   if [[ -z "$APPLY_RESULT" ]]; then
-    echo "Error: Failed to apply IAM policy. Check gcloud output for details."
+    echo "Error: Failed to apply IAM policy. Check gcloud output for details." >&2
+    echo "This typically indicates insufficient permissions for the executor service account (e.g., missing roles/iam.securityAdmin) on project '$GCP_PROJECT_ID'." >&2
+    echo "Review the debug output above for more clues." >&2
     exit 1
   fi
 
