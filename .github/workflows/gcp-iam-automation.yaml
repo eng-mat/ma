@@ -7,6 +7,18 @@ on:
       - main # Trigger on pushes to the 'main' branch
   workflow_dispatch: # Allow manual triggering from the GitHub Actions UI
     inputs:
+      gcp_project_id:
+        description: 'The GCP Project ID to assign roles in'
+        required: true
+        type: string
+      gcp_service_account_email:
+        description: 'The email of the GCP Service Account to assign roles to (e.g., github-actions@my-project.iam.gserviceaccount.com)'
+        required: true
+        type: string
+      ad_group_email:
+        description: 'The email of the Active Directory Group to assign roles to (e.g., ad-group@your-domain.com)'
+        required: true
+        type: string
       individual_roles_sa:
         description: 'Comma-separated individual IAM roles for the Service Account (e.g., roles/viewer,roles/storage.objectViewer)'
         required: false
@@ -39,13 +51,11 @@ on:
         default: ''
 
 # Define environment variables that will be passed to the jobs.
-# These values will be sourced from the GitHub Environment secrets.
+# WIF_POOL_ID will still be sourced from GitHub Environment secrets.
 env:
-  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GCP_SERVICE_ACCOUNT_EMAIL: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
-  AD_GROUP_EMAIL: ${{ secrets.AD_GROUP_EMAIL }}
-  # IAM_ROLES_SA and IAM_ROLES_AD will now come from workflow_dispatch inputs, not secrets.
-  # Secrets will only hold the fixed values like WIF_POOL_ID, project ID, SA email, AD group email.
+  # GCP_PROJECT_ID, GCP_SERVICE_ACCOUNT_EMAIL, AD_GROUP_EMAIL are now workflow_dispatch inputs.
+  # IAM_ROLES_SA and IAM_ROLES_AD will also come from workflow_dispatch inputs.
+  # Secrets will only hold the fixed values like WIF_POOL_ID.
 
 jobs:
   dry-run:
@@ -72,13 +82,13 @@ jobs:
           # The GCP Service Account email that the GitHub Actions runner will impersonate.
           # This SA must have the necessary IAM permissions (e.g., roles/iam.securityAdmin)
           # and roles/iam.serviceAccountTokenCreator on itself.
-          service_account: ${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}
+          service_account: ${{ github.event.inputs.gcp_service_account_email }}
 
       - name: Set up gcloud CLI
         # Installs and configures the gcloud CLI on the runner
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          project_id: ${{ github.event.inputs.gcp_project_id }}
 
       - name: Install jq
         # jq is a lightweight and flexible command-line JSON processor, used by the shell script.
@@ -90,12 +100,12 @@ jobs:
         # All script arguments are passed from the GitHub Environment variables and workflow inputs.
         # The output is redirected to a file for artifact upload.
         run: |
-          chmod +x ./group_sa_iam/assign_iam_roles.sh # Make the script executable
-          ./group_sa_iam/assign_iam_roles.sh \
+          chmod +x ./assign_iam_roles.sh # Make the script executable
+          ./assign_iam_roles.sh \
             --mode dry-run \
-            --project-id "${{ env.GCP_PROJECT_ID }}" \
-            --service-account-email "${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}" \
-            --ad-group-email "${{ env.AD_GROUP_EMAIL }}" \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
             --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
             --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
             --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
@@ -128,12 +138,12 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_POOL_ID }}
-          service_account: ${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}
+          service_account: ${{ github.event.inputs.gcp_service_account_email }}
 
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
+          project_id: ${{ github.event.inputs.gcp_project_id }}
 
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
@@ -141,12 +151,12 @@ jobs:
       - name: Execute Apply Script
         # Execute the shell script in 'apply' mode to implement the changes.
         run: |
-          chmod +x ./group_sa_iam/assign_iam_roles.sh # Make the script executable
-          ./group_sa_iam/assign_iam_roles.sh \
+          chmod +x ./assign_iam_roles.sh # Make the script executable
+          ./assign_iam_roles.sh \
             --mode apply \
-            --project-id "${{ env.GCP_PROJECT_ID }}" \
-            --service-account-email "${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}" \
-            --ad-group-email "${{ env.AD_GROUP_EMAIL }}" \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
+            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
             --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
             --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
             --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
