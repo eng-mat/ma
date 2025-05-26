@@ -3,14 +3,6 @@ name: Assign GCP IAM Roles
 on:
   workflow_dispatch:
     inputs:
-      mode:
-        description: 'Operation mode (dry-run or apply)'
-        required: true
-        default: 'dry-run'
-        type: choice
-        options:
-          - dry-run
-          - apply
       gcp_project_id:
         description: 'Target GCP Project ID'
         required: true
@@ -39,9 +31,16 @@ on:
         description: 'Name of a predefined bundled role (e.g., GenAIUser, GenAIFeatureStoreViewer)'
         required: false
         type: string
+      # New input for manual trigger of apply job
+      run_apply:
+        description: 'Set to "true" to run the apply job (requires manual approval for protection)'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
-  assign-iam-roles:
+  dry-run-iam-roles:
+    name: Dry Run IAM Changes
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -59,22 +58,65 @@ jobs:
       - name: Install Python dependencies
         run: pip install google-cloud-resourcemanager
 
-      - name: Authenticate to Google Cloud
-        id: 'auth'
+      - name: Authenticate to Google Cloud (Dry Run)
+        id: 'auth-dry-run'
         uses: 'google-github-actions/auth@v2'
         with:
+          # Ensure this SA has 'roles/resourcemanager.projectIamViewer' for dry-run
           workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID' # Replace with your WIF provider
           service_account: 'your-github-actions-sa@your-project.iam.gserviceaccount.com' # Replace with your SA email
-          # Ensure this SA has:
-          # - roles/resourcemanager.projectIamViewer (to read policy)
-          # - roles/iam.securityAdmin (to set policy in 'apply' mode)
-          # - (If using --gcloud-project-id, then also roles/resourcemanager.projectIamViewer on *that* project)
 
-      - name: Run IAM Role Assignment Script
+      - name: Run IAM Role Assignment Script (Dry Run)
         run: |
           chmod +x ./assign_iam_roles.sh
           ./assign_iam_roles.sh \
-            --mode "${{ github.event.inputs.mode }}" \
+            --mode "dry-run" \
+            --project-id "${{ github.event.inputs.gcp_project_id }}" \
+            --target-type "${{ github.event.inputs.target_type }}" \
+            ${{ github.event.inputs.service_account_email && format('--service-account-email "{0}"', github.event.inputs.service_account_email) || '' }} \
+            ${{ github.event.inputs.ad_group_email && format('--ad-group-email "{0}"', github.event.inputs.ad_group_email) || '' }} \
+            ${{ github.event.inputs.iam_roles && format('--roles "{0}"', github.event.inputs.iam_roles) || '' }} \
+            ${{ github.event.inputs.bundled_roles && format('--bundled-roles "{0}"', github.event.inputs.bundled_roles) || '' }}
+
+  ---
+
+  apply-iam-roles:
+    name: Apply IAM Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Workload Identity Federation
+    environment:
+      name: production # Optional: Protect with environments (e.g., requiring manual approval)
+      url: https://console.cloud.google.com/iam-admin/iam?project=${{ github.event.inputs.gcp_project_id }} # Link to project IAM console
+    # Only run this job if 'run_apply' input is true
+    if: github.event.inputs.run_apply == true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Python dependencies
+        run: pip install google-cloud-resourcemanager
+
+      - name: Authenticate to Google Cloud (Apply)
+        id: 'auth-apply'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          # This SA needs 'roles/iam.securityAdmin' or 'roles/resourcemanager.projectIamAdmin'
+          workload_identity_provider: 'projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_ID/providers/YOUR_PROVIDER_ID' # Replace with your WIF provider
+          service_account: 'your-github-actions-sa@your-project.iam.gserviceaccount.com' # Replace with your SA email
+
+      - name: Run IAM Role Assignment Script (Apply)
+        run: |
+          chmod +x ./assign_iam_roles.sh
+          ./assign_iam_roles.sh \
+            --mode "apply" \
             --project-id "${{ github.event.inputs.gcp_project_id }}" \
             --target-type "${{ github.event.inputs.target_type }}" \
             ${{ github.event.inputs.service_account_email && format('--service-account-email "{0}"', github.event.inputs.service_account_email) || '' }} \
