@@ -166,20 +166,25 @@ echo "Gcloud project set to $GCP_PROJECT_ID."
 echo "Fetching current IAM policy for project $GCP_PROJECT_ID with debug verbosity..."
 # Retrieve the current IAM policy in JSON format with debug logging
 # Capture stderr to identify potential gcloud errors, even if it exits 0
-CURRENT_POLICY_JSON=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --verbosity=debug 2> >(tee /dev/stderr))
+# IMPORTANT: Filter output to ensure only JSON is passed to jq.
+# This sed command extracts content from the first '{' to the last '}'.
+RAW_GCLOUD_OUTPUT=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --verbosity=debug 2> >(tee /dev/stderr))
+CURRENT_POLICY_JSON=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
+
 
 if [[ -z "$CURRENT_POLICY_JSON" ]]; then
-  echo "Error: Failed to retrieve current IAM policy for project '$GCP_PROJECT_ID'." >&2
+  echo "Error: Failed to retrieve or parse current IAM policy for project '$GCP_PROJECT_ID'." >&2
   echo "This often indicates one of the following:" >&2
   echo "  1. The Project ID is incorrect or does not exist." >&2
-  echo "  2. The Workload Identity Federation (WIF) executor service account ('${WIF_EXECUTOR_SA_EMAIL:-N/A}') does not have sufficient permissions (e.g., roles/resourcemanager.projectIamViewer) on project '$GCP_PROJECT_ID'." >&2
+  echo "  2. The Workload Identity Federation (WIF) executor service account does not have sufficient permissions (e.g., roles/resourcemanager.projectIamViewer) on project '$GCP_PROJECT_ID'." >&2
   echo "  3. The Workload Identity Federation authentication itself failed." >&2
+  echo "  4. The gcloud output did not contain valid JSON, even after filtering. Review the 'RAW_GCLOUD_OUTPUT' in logs for clues." >&2
   echo "Review the debug output above for more clues." >&2
   exit 1
 fi
 
 # --- DEBUGGING STEP ADDED HERE ---
-echo "--- DEBUG: Content of CURRENT_POLICY_JSON before jq parsing ---"
+echo "--- DEBUG: Content of CURRENT_POLICY_JSON before jq parsing (after sed filter) ---"
 echo "$CURRENT_POLICY_JSON"
 echo "--- END DEBUG ---"
 # --- END DEBUGGING STEP ---
@@ -205,8 +210,8 @@ add_or_update_member() {
   local member_string="${member_type}:${member_email}"
 
   # Check if a binding for this specific role already exists in the policy.
-  # jq -e will exit with 1 if no match is found, which is handled by set -e.
-  local role_exists=$(echo "$policy_json" | jq --arg role "$role" '.bindings[] | select(.role == $role)')
+  # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
+  local role_exists=$(echo "$policy_json" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
 
   if [[ -z "$role_exists" ]]; then
     # If the role binding does not exist, add a new binding for this role and member.
@@ -218,12 +223,12 @@ add_or_update_member() {
         # Condition is explicitly omitted as per requirement ("set the role condition to none").
         # gcloud prefers 'condition' to be absent if no condition is needed, rather than 'null'.
       }]
-    ')
+    ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
   else
     # If the role binding exists, check if the member is already part of this binding.
     local member_in_role=$(echo "$policy_json" | jq --arg role "$role" --arg member "$member_string" '
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
-    ')
+    ' 2>/dev/null) # Redirect stderr to /dev/null for this check
 
     if [[ -z "$member_in_role" ]]; then
       # If the member is not in the existing role binding, add them.
@@ -237,7 +242,7 @@ add_or_update_member() {
             . # Keep other bindings unchanged
           end
         )
-      ')
+      ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
     else
       echo "  Member '$member_string' already exists in role '$role'. Skipping."
     fi
@@ -310,7 +315,7 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
       ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
     else
       ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
-    Ffi
+    fi
   fi
 
   if [[ -n "$ALL_AD_ROLES" ]]; then
@@ -335,7 +340,7 @@ fi
 if [[ "$MODE" == "dry-run" ]]; then
   echo "--- Dry Run Output (Proposed IAM Policy) ---"
   # Print the final modified policy JSON in a human-readable format
-  echo "$MODIFIED_POLICY_JSON" | jq .
+  echo "$MODIFIED_POLICY_JSON" | jq . 2> >(tee /dev/stderr) # Redirect jq errors to stderr
   echo "--- End Dry Run Output ---"
   echo "Validation successful: Proposed changes are displayed above. No changes have been applied to GCP."
   # Exit with 0 to indicate success for GitHub Actions
@@ -343,7 +348,7 @@ if [[ "$MODE" == "dry-run" ]]; then
 elif [[ "$MODE" == "apply" ]]; then
   echo "Applying modified IAM policy to project $GCP_PROJECT_ID with debug verbosity..."
   # Extract the ETag from the original policy. This is crucial for optimistic concurrency.
-  ETAG=$(echo "$CURRENT_POLICY_JSON" | jq -r '.etag')
+  ETAG=$(echo "$CURRENT_POLICY_JSON" | jq -r '.etag' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
   if [[ -z "$ETAG" ]]; then
     echo "Error: ETag not found in current policy. Cannot apply changes safely without an ETag. This might indicate an issue with fetching the initial policy." >&2
     exit 1
@@ -351,7 +356,7 @@ elif [[ "$MODE" == "apply" ]]; then
 
   # Add the ETag to the modified policy JSON before applying it.
   # The `set-iam-policy` command requires the ETag from the policy it's modifying.
-  FINAL_POLICY_TO_APPLY=$(echo "$MODIFIED_POLICY_JSON" | jq --arg etag "$ETAG" '.etag = $etag')
+  FINAL_POLICY_TO_APPLY=$(echo "$MODIFIED_POLICY_JSON" | jq --arg etag "$ETAG" '.etag = $etag' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
 
   # Apply the policy using gcloud. We pipe the JSON directly to stdin.
   # Capture stderr to identify potential gcloud errors
@@ -366,7 +371,7 @@ elif [[ "$MODE" == "apply" ]]; then
 
   echo "IAM policy applied successfully."
   echo "New policy after application:"
-  echo "$APPLY_RESULT" | jq . # Print the policy returned by gcloud after successful application
+  echo "$APPLY_RESULT" | jq . 2> >(tee /dev/stderr) # Print the policy returned by gcloud after successful application
 fi
 
 echo "--- Script Finished ---"
