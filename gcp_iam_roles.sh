@@ -14,13 +14,13 @@ set -euo pipefail
 
 MODE=""
 GCP_PROJECT_ID=""
-TARGET_TYPE=""            # "service_account" or "ad_group"
+TARGET_TYPE=""          # "service_account" or "ad_group"
 GCP_SERVICE_ACCOUNT_EMAIL="" # Only relevant if TARGET_TYPE is "service_account"
-AD_GROUP_EMAIL=""         # Only relevant if "ad_group"
-IAM_ROLES_SA=""           # Comma-separated list of individual roles for the Service Account
-IAM_ROLES_AD=""           # Comma-separated list of individual roles for the AD Group
-BUNDLED_ROLES_SA=""       # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
-BUNDLED_ROLES_AD=""       # Name of bundled role for AD Group (e.g., "GenAI_DEVELOPER")
+AD_GROUP_EMAIL=""       # Only relevant if TARGET_TYPE is "ad_group"
+IAM_ROLES_SA=""         # Comma-separated list of individual roles for the Service Account
+IAM_ROLES_AD=""         # Comma-separated list of individual roles for the AD Group
+BUNDLED_ROLES_SA=""     # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
+BUNDLED_ROLES_AD=""     # Name of bundled role for AD Group (e.g., "GenAI_DEVELOPER")
 
 # Function to display usage information
 usage() {
@@ -31,15 +31,15 @@ usage() {
   echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
   echo ""
   echo "Arguments:"
-  echo "  --mode                      : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
-  echo "  --project-id                : The GCP Project ID."
-  echo "  --target-type               : The type of principal to assign roles to: 'service_account' or 'ad_group'."
-  echo "  --service-account-email : (Required if --target-type is 'service_account') The email of the GCP Service Account."
+  echo "  --mode                    : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
+  echo "  --project-id              : The GCP Project ID."
+  echo "  --target-type             : The type of principal to assign roles to: 'service_account' or 'ad_group'."
+  echo "  --service-account-email   : (Required if --target-type is 'service_account') The email of the GCP Service Account."
   echo "  --ad-group-email          : (Required if --target-type is 'ad_group') The email of the Active Directory Group (must be synced to GCP)."
-  echo "  --roles-sa                  : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
-  echo "  --roles-ad                  : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
-  echo "  --bundled-roles-sa          : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
-  echo "  --bundled-roles-ad          : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
+  echo "  --roles-sa                : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
+  echo "  --roles-ad                : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
+  echo "  --bundled-roles-sa        : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
+  echo "  --bundled-roles-ad        : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
   echo ""
   echo "Note: If --target-type is 'service_account', at least one of --roles-sa or --bundled-roles-sa must be provided."
   echo "Note: If --target-type is 'ad_group', at least one of --roles-ad or --bundled-roles-ad must be provided."
@@ -149,7 +149,6 @@ echo "------------------------------------------------------"
 
 # --- Pre-checks and Setup ---
 
-# Check for gcloud and jq CLI tools
 if ! command -v gcloud &> /dev/null; then
   echo "Error: gcloud CLI not found. Please ensure it's installed and in your PATH." >&2
   exit 1
@@ -160,85 +159,86 @@ if ! command -v jq &> /dev/null; then
 fi
 
 echo "Setting gcloud project to $GCP_PROJECT_ID..."
-# Set the gcloud project context for subsequent commands
-# Capture stderr to identify potential gcloud errors
-gcloud config set project "$GCP_PROJECT_ID" --quiet 2> >(tee /dev/stderr) || { echo "Error: Failed to set gcloud project context. This might indicate an invalid Project ID: '$GCP_PROJECT_ID'." >&2; exit 1; }
+GCLOUD_CONFIG_STDERR_FILE=$(mktemp)
+if ! gcloud config set project "$GCP_PROJECT_ID" --quiet 2> "$GCLOUD_CONFIG_STDERR_FILE"; then
+    echo "Error: Failed to set gcloud project context for Project ID: '$GCP_PROJECT_ID'." >&2
+    cat "$GCLOUD_CONFIG_STDERR_FILE" >&2
+    rm -f "$GCLOUD_CONFIG_STDERR_FILE"
+    exit 1
+fi
+GCLOUD_CONFIG_STDERR_CONTENT=$(cat "$GCLOUD_CONFIG_STDERR_FILE")
+if [[ -n "$GCLOUD_CONFIG_STDERR_CONTENT" ]]; then
+    echo "Warning: gcloud config set project produced stderr output:" >&2
+    echo "$GCLOUD_CONFIG_STDERR_CONTENT" >&2
+fi
+rm -f "$GCLOUD_CONFIG_STDERR_FILE"
 echo "Gcloud project set to $GCP_PROJECT_ID."
 
-echo "Fetching current IAM policy for project $GCP_PROJECT_ID with debug verbosity..."
-# Retrieve the current IAM policy in JSON format with debug logging
-# Capture stderr to identify potential gcloud errors, even if it exits 0
-# IMPORTANT: Filter output to ensure only JSON is passed to jq.
-# This sed command extracts content from the first '{' to the last '}'.
-RAW_GCLOUD_OUTPUT=$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --verbosity=debug 2> >(tee /dev/stderr))
-CURRENT_POLICY_JSON_RAW=$(echo "$RAW_GCLOUD_OUTPUT" | sed -n '/^{/,/}$/p')
 
+echo "Fetching current IAM policy for project $GCP_PROJECT_ID..."
+GCLOUD_GET_POLICY_STDOUT_FILE=$(mktemp)
+GCLOUD_GET_POLICY_STDERR_FILE=$(mktemp)
+
+# We use --quiet to minimize non-JSON output on stderr from gcloud itself for successful commands.
+# Errors will still go to stderr.
+if ! gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json --quiet > "$GCLOUD_GET_POLICY_STDOUT_FILE" 2> "$GCLOUD_GET_POLICY_STDERR_FILE"; then
+    echo "Error: 'gcloud projects get-iam-policy \"$GCP_PROJECT_ID\" --format=json' command failed." >&2
+    echo "Stderr:" >&2
+    cat "$GCLOUD_GET_POLICY_STDERR_FILE" >&2
+    echo "Stdout (if any):" >&2
+    cat "$GCLOUD_GET_POLICY_STDOUT_FILE" >&2
+    rm -f "$GCLOUD_GET_POLICY_STDOUT_FILE" "$GCLOUD_GET_POLICY_STDERR_FILE"
+    exit 1
+fi
+
+GCLOUD_GET_POLICY_STDERR_CONTENT=$(cat "$GCLOUD_GET_POLICY_STDERR_FILE")
+if [[ -n "$GCLOUD_GET_POLICY_STDERR_CONTENT" ]]; then
+    # Log stderr from gcloud get-iam-policy, as it might contain warnings or important info even on success
+    echo "Stderr from 'gcloud projects get-iam-policy' (even on success):" >&2
+    echo "$GCLOUD_GET_POLICY_STDERR_CONTENT" >&2
+fi
+
+CURRENT_POLICY_JSON_RAW=$(cat "$GCLOUD_GET_POLICY_STDOUT_FILE")
+rm -f "$GCLOUD_GET_POLICY_STDOUT_FILE" "$GCLOUD_GET_POLICY_STDERR_FILE"
 
 if [[ -z "$CURRENT_POLICY_JSON_RAW" ]]; then
-  echo "Error: Failed to retrieve or parse current IAM policy for project '$GCP_PROJECT_ID'." >&2
-  echo "This often indicates one of the following:" >&2
-  echo "  1. The Project ID is incorrect or does not exist." >&2
-  echo "  2. The Workload Identity Federation (WIF) executor service account does not have sufficient permissions (e.g., roles/resourcemanager.projectIamViewer) on project '$GCP_PROJECT_ID'." >&2
-  echo "  3. The Workload Identity Federation authentication itself failed." >&2
-  echo "  4. The gcloud output did not contain valid JSON, even after filtering. Review the 'RAW_GCLOUD_OUTPUT' in logs for clues." >&2
-  echo "Review the debug output above for more clues." >&2
+  echo "Error: Fetched IAM policy for project '$GCP_PROJECT_ID' is empty. This is unexpected." >&2
+  echo "This could indicate an issue with the 'gcloud projects get-iam-policy' command or insufficient permissions even if the command succeeded." >&2
   exit 1
 fi
 
-# --- UPDATED: JSON Cleanup Function (More Robust Error Handling) ---
-cleanup_malformed_json() {
-  local input_json="$1"
-  local cleaned_json=""
-  local jq_output=""
-  local jq_exit_code=""
-
-  echo "Attempting to clean up potentially malformed JSON policy (semicolons to colons)..."
-  # Attempt initial fix: replace semicolons with colons
-  cleaned_json=$(echo "$input_json" | sed -E 's/("[^"]+")\s*;\s*/\1: /g')
-
-  echo "DEBUG: Attempting JQ validation and pretty-print on cleaned JSON."
-  echo "DEBUG: Cleaned JSON for JQ validation:"
-  echo "$cleaned_json"
-  echo "DEBUG: End of Cleaned JSON for JQ validation."
-
-  # Attempt to parse and pretty-print with jq.
-  # Capture both stdout (the pretty JSON) and stderr (jq errors)
-  jq_output=$(echo "$cleaned_json" | jq --raw-output '.' 2>&1) # Redirect stderr to stdout for capture
-  jq_exit_code=$?
-
-  if [[ $jq_exit_code -ne 0 ]]; then
-    echo "ERROR: JQ failed to parse the JSON policy even after basic semicolon cleanup." >&2
-    echo "This indicates a more fundamental JSON malformation (e.g., truncation, unmatched braces/quotes)." >&2
-    echo "JQ's error message (from stderr):" >&2
-    echo "$jq_output" >&2 # jq_output now contains the error message from jq
-    echo "The problematic JSON input that JQ tried to parse was:" >&2
-    echo "$cleaned_json" | head -n 40 >&2 # show first 40 lines to keep logs readable
-    echo "..." >&2
-    exit 1 # Script must exit as we cannot safely proceed with malformed JSON
-  else
-    echo "JSON policy cleanup successful. Policy is now valid JSON."
-    echo "$jq_output" # Return the valid, pretty-printed JSON
-  fi
-}
-
-# --- Apply Cleanup ---
-echo "--- DEBUG: Raw JSON from gcloud (before cleanup) ---"
-echo "$RAW_GCLOUD_OUTPUT" # Changed to RAW_GCLOUD_OUTPUT to see full original
+echo "--- DEBUG: Raw JSON fetched from gcloud projects get-iam-policy ---"
+echo "$CURRENT_POLICY_JSON_RAW"
 echo "--- END RAW DEBUG ---"
 
-# Call the cleanup function. It will exit if JSON is still malformed.
-CURRENT_POLICY_JSON=$(cleanup_malformed_json "$CURRENT_POLICY_JSON_RAW")
+echo "Validating and parsing fetched IAM policy with jq..."
+JQ_ERROR_LOG_FILE=$(mktemp)
+# Parse the raw JSON. This will also pretty-print it, which is fine for MODIFIED_POLICY_JSON.
+# CURRENT_POLICY_JSON will hold this initial, validated policy.
+CURRENT_POLICY_JSON=$(echo "$CURRENT_POLICY_JSON_RAW" | jq '.' 2> "$JQ_ERROR_LOG_FILE")
+JQ_PARSE_EXIT_CODE=$?
 
-echo "--- DEBUG: Content of CURRENT_POLICY_JSON after cleanup and before final ops ---"
-echo "$CURRENT_POLICY_JSON"
-echo "--- END DEBUG ---"
+if [[ $JQ_PARSE_EXIT_CODE -ne 0 ]]; then
+  echo "ERROR: Failed to parse the IAM policy JSON fetched from GCP for project '$GCP_PROJECT_ID'." >&2
+  echo "JQ exit code: $JQ_PARSE_EXIT_CODE" >&2
+  echo "JQ parsing errors:" >&2
+  cat "$JQ_ERROR_LOG_FILE" >&2
+  echo "The raw JSON input provided to JQ (which was fetched from gcloud) was:" >&2
+  echo "$CURRENT_POLICY_JSON_RAW" >&2
+  echo "This often indicates one of the following:" >&2
+  echo "  1. The Project ID ('$GCP_PROJECT_ID') is incorrect, does not exist, or you lack permissions." >&2
+  echo "  2. The WIF executor SA ('$WIF_EXECUTOR_SA_EMAIL') lacks 'roles/resourcemanager.projectIamViewer' on project '$GCP_PROJECT_ID'." >&2
+  echo "  3. WIF authentication failed." >&2
+  echo "  4. 'gcloud' command produced non-JSON output on stdout despite '--format=json'." >&2
+  rm -f "$JQ_ERROR_LOG_FILE"
+  exit 1
+fi
+rm -f "$JQ_ERROR_LOG_FILE"
+echo "Current IAM policy fetched and parsed successfully."
 
-
-echo "Current policy fetched and cleaned successfully."
-
-# Initialize MODIFIED_POLICY_JSON with the current policy.
-# We will manipulate this JSON object using jq.
+# MODIFIED_POLICY_JSON will be manipulated. Initialize it with the valid current policy.
 MODIFIED_POLICY_JSON="$CURRENT_POLICY_JSON"
+
 
 # Function to add or update a member in a role binding within the policy JSON.
 # Arguments:
@@ -253,128 +253,85 @@ add_or_update_member() {
   local member_email="$4"
   local member_string="${member_type}:${member_email}"
   local temp_policy_json="" # To hold intermediate jq results
+  local jq_op_stderr_file
 
-  echo "  --- Entering add_or_update_member for role '$role', member '$member_string' ---"
-  echo "  DEBUG: Input policy_json_input (full content):"
-  echo "$policy_json_input" # Print full input JSON for thorough debugging
-  echo "  DEBUG: End of Input policy_json_input"
+  echo "    --- Entering add_or_update_member for role '$role', member '$member_string' ---"
 
-  # Crucial Check: Ensure policy_json_input is not empty/malformed before passing to jq
-  if [[ -z "$policy_json_input" ]]; then
-    echo "  FATAL ERROR: Input JSON to add_or_update_member is empty. Exiting." >&2
-    exit 1
-  fi
-  # Use jq -e '.' to validate JSON. It returns 0 for valid JSON, 1 for invalid.
+  # Validate input JSON before proceeding (though it should be valid if initial parsing succeeded)
   if ! echo "$policy_json_input" | jq -e '.' >/dev/null 2>&1; then
-    echo "  FATAL ERROR: Input JSON to add_or_update_member is not valid JSON." >&2
-    echo "  Problematic JSON for jq validation in add_or_update_member:" >&2
-    echo "$policy_json_input" | head -n 40 >&2
-    echo "..." >&2
+    echo "    FATAL ERROR: Input JSON to add_or_update_member is not valid JSON. This should not happen if initial parsing was correct." >&2
+    echo "    Problematic JSON snippet (first 500 chars): '$(echo "$policy_json_input" | head -c 500)'" >&2
     exit 1
   fi
 
+  jq_op_stderr_file=$(mktemp)
 
   # Check if a binding for this specific role already exists in the policy.
-  # Use `jq -e` for robust checking. If it matches nothing, it exits non-zero, but that's okay.
-  # If it's a parsing error, it will exit non-zero and print to stderr.
-  local role_exists_check_output
-  role_exists_check_output=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>&1)
-  local jq_exit_code=$?
-
-  if [[ $jq_exit_code -ne 0 ]]; then
-    # If jq failed to parse the JSON *here*, then there's a problem.
-    # We already validated input JSON, so this usually means 'bindings' is missing or empty,
-    # which results in a non-zero exit but not a parse error.
-    if [[ "$role_exists_check_output" == "parse error"* ]]; then
-        echo "  ERROR: jq failed to check for existing role binding for role '$role' due to a parse error." >&2
-        echo "  JQ Output (likely error): $role_exists_check_output" >&2
-        exit 1 # Exit script if jq fails here
-    fi
-    # If jq_exit_code is non-zero but not a parse error, it means no match was found, which is intended.
-    # So, continue to add a new binding.
-    # Set role_exists_check to empty to trigger the "add new binding" path
-    role_exists_check=""
-  else
-    # Role exists, capture the actual output if needed, but for now we just care if it found something
-    role_exists_check="$role_exists_check_output"
+  local role_exists_check
+  role_exists_check=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2> "$jq_op_stderr_file")
+  if [[ $? -ne 0 && -s "$jq_op_stderr_file" ]]; then # Check if jq failed and produced stderr
+      echo "    ERROR: jq failed to check for existing role binding for role '$role'." >&2
+      cat "$jq_op_stderr_file" >&2
+      rm -f "$jq_op_stderr_file"
+      exit 1
   fi
 
-
   if [[ -z "$role_exists_check" ]]; then
-    # If the role binding does not exist, add a new binding for this role and member.
-    echo "  Adding new binding for role '$role' with member '$member_string'."
+    echo "    Adding new binding for role '$role' with member '$member_string'."
     temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings += [{
         "role": $role,
         "members": [$member]
-        # Condition is explicitly omitted as per requirement ("set the role condition to none").
-        # gcloud prefers 'condition' to be absent if no condition is needed, rather than 'null'.
+        # Condition is explicitly omitted
       }]
-    ' 2>&1) # Redirect jq errors to stdout for capture
-    jq_exit_code=$?
-    if [[ $jq_exit_code -ne 0 ]]; then
-      echo "  ERROR: jq failed to add new binding for role '$role'. JQ Output: $temp_policy_json" >&2
-      exit 1 # Exit script if jq fails here
-    fi
-    if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-      echo "  ERROR: jq command to add new binding produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+    ' 2> "$jq_op_stderr_file")
+    if [[ $? -ne 0 || -z "$temp_policy_json" ]]; then
+      echo "    ERROR: jq failed to add new binding for role '$role', or produced empty output." >&2
+      cat "$jq_op_stderr_file" >&2
+      rm -f "$jq_op_stderr_file"
       exit 1
     fi
   else
     # If the role binding exists, check if the member is already part of this binding.
-    local member_in_role_check_output
-    member_in_role_check_output=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
+    local member_in_role_check
+    member_in_role_check=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
-    ' 2>&1) # Redirect stderr to stdout for capture
-    jq_exit_code=$?
-
-    if [[ $jq_exit_code -ne 0 ]]; then
-        if [[ "$member_in_role_check_output" == "parse error"* ]]; then
-            echo "  ERROR: jq failed to check for existing member in role '$role' due to a parse error." >&2
-            echo "  JQ Output (likely error): $member_in_role_check_output" >&2
-            exit 1 # Exit script if jq fails here
-        fi
-        member_in_role_check="" # No match or other non-error failure (e.g., empty array)
-    else
-        member_in_role_check="$member_in_role_check_output"
+    ' 2> "$jq_op_stderr_file")
+    if [[ $? -ne 0 && -s "$jq_op_stderr_file" ]]; then
+      echo "    ERROR: jq failed to check for existing member in role '$role'." >&2
+      cat "$jq_op_stderr_file" >&2
+      rm -f "$jq_op_stderr_file"
+      exit 1
     fi
 
     if [[ -z "$member_in_role_check" ]]; then
-      # If the member is not in the existing role binding, add them.
-      echo "  Adding member '$member_string' to existing role '$role'."
+      echo "    Adding member '$member_string' to existing role '$role'."
       temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
         .bindings |= map(
           if .role == $role then
-            # Append the new member to the members array
-            .members += [$member]
+            .members += [$member] | .members |= unique # Ensure uniqueness after adding
           else
-            . # Keep other bindings unchanged
+            .
           end
         )
-      ' 2>&1) # Redirect jq errors to stdout for capture
-      jq_exit_code=$?
-      if [[ $jq_exit_code -ne 0 ]]; then
-        echo "  ERROR: jq failed to add member to existing role '$role'. JQ Output: $temp_policy_json" >&2
-        exit 1 # Exit script if jq fails here
-      fi
-      if [[ -z "$temp_policy_json" ]]; then # Check if jq produced empty output
-        echo "  ERROR: jq command to add member to existing role produced empty output for role '$role'. Input JSON might be invalid or jq expression is incorrect." >&2
+      ' 2> "$jq_op_stderr_file")
+      if [[ $? -ne 0 || -z "$temp_policy_json" ]]; then
+        echo "    ERROR: jq failed to add member to existing role '$role', or produced empty output." >&2
+        cat "$jq_op_stderr_file" >&2
+        rm -f "$jq_op_stderr_file"
         exit 1
       fi
     else
-      echo "  Member '$member_string' already exists in role '$role'. Skipping."
-      temp_policy_json="$policy_json_input" # No change, so keep original
+      echo "    Member '$member_string' already exists in role '$role'. Skipping."
+      temp_policy_json="$policy_json_input" # No change
     fi
   fi
-  echo "  DEBUG: Output policy_json (full content):"
-  echo "$temp_policy_json" # Print full output JSON for thorough debugging
-  echo "  DEBUG: End of Output policy_json"
-  echo "  --- Exiting add_or_update_member ---"
+  rm -f "$jq_op_stderr_file"
+  echo "    --- Exiting add_or_update_member ---"
   echo "$temp_policy_json" # Return the modified policy JSON
 }
 
 # --- Function to resolve bundled roles ---
-# This function takes a bundled role name and returns a comma-separated string of actual IAM roles.
 get_bundled_roles() {
   local bundle_name="$1"
   local roles=""
@@ -385,7 +342,6 @@ get_bundled_roles() {
     "GenAI_DEVELOPER")
       roles="roles/aiplatform.user,roles/viewer,roles/bigquery.dataViewer,roles/storage.objectViewer"
       ;;
-    # Add more bundled roles here as needed
     "CUSTOM_BUNDLE_1")
       roles="roles/compute.admin,roles/container.admin"
       ;;
@@ -414,13 +370,10 @@ if [[ "$TARGET_TYPE" == "service_account" ]]; then
 
   if [[ -n "$ALL_SA_ROLES" ]]; then
     echo "Processing roles for Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
-    # Split the comma-separated roles string into an array
     IFS=',' read -ra SA_ROLES_ARRAY <<< "$ALL_SA_ROLES"
     for role in "${SA_ROLES_ARRAY[@]}"; do
-      # Trim whitespace from role name
-      role=$(echo "$role" | xargs)
-      if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
-        # Call the function to add or update the service account for each role
+      role=$(echo "$role" | xargs) # Trim whitespace
+      if [[ -n "$role" ]]; then
         MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "serviceAccount" "$GCP_SERVICE_ACCOUNT_EMAIL")
       fi
     done
@@ -443,13 +396,10 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
 
   if [[ -n "$ALL_AD_ROLES" ]]; then
     echo "Processing roles for AD Group: $AD_GROUP_EMAIL"
-    # Split the comma-separated roles string into an array
     IFS=',' read -ra AD_ROLES_ARRAY <<< "$ALL_AD_ROLES"
     for role in "${AD_ROLES_ARRAY[@]}"; do
-      # Trim whitespace from role name
-      role=$(echo "$role" | xargs)
-      if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
-        # Call the function to add or update the AD group for each role
+      role=$(echo "$role" | xargs) # Trim whitespace
+      if [[ -n "$role" ]]; then
         MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "group" "$AD_GROUP_EMAIL")
       fi
     done
@@ -459,42 +409,83 @@ elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
 fi
 
 # --- Dry Run vs. Apply ---
+JQ_FINAL_OUTPUT_STDERR_FILE=$(mktemp)
 
 if [[ "$MODE" == "dry-run" ]]; then
   echo "--- Dry Run Output (Proposed IAM Policy) ---"
-  # Print the final modified policy JSON in a human-readable format
-  echo "$MODIFIED_POLICY_JSON" | jq . 2> >(tee /dev/stderr) # Redirect jq errors to stderr
+  echo "$MODIFIED_POLICY_JSON" | jq . 2> "$JQ_FINAL_OUTPUT_STDERR_FILE" || {
+    echo "Error: jq failed to format final dry-run policy." >&2
+    cat "$JQ_FINAL_OUTPUT_STDERR_FILE" >&2
+    rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE"
+    exit 1;
+  }
+  if [[ -s "$JQ_FINAL_OUTPUT_STDERR_FILE" ]]; then
+      echo "Warning: jq produced stderr during final dry-run formatting:" >&2
+      cat "$JQ_FINAL_OUTPUT_STDERR_FILE" >&2
+  fi
   echo "--- End Dry Run Output ---"
   echo "Validation successful: Proposed changes are displayed above. No changes have been applied to GCP."
-  # Exit with 0 to indicate success for GitHub Actions
-  exit 0
 elif [[ "$MODE" == "apply" ]]; then
-  echo "Applying modified IAM policy to project $GCP_PROJECT_ID with debug verbosity..."
-  # Extract the ETag from the original policy. This is crucial for optimistic concurrency.
-  ETAG=$(echo "$CURRENT_POLICY_JSON" | jq -r '.etag' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
-  if [[ -z "$ETAG" ]]; then
-    echo "Error: ETag not found in current policy. Cannot apply changes safely without an ETag. This might indicate an issue with fetching the initial policy." >&2
+  echo "Applying modified IAM policy to project $GCP_PROJECT_ID..."
+  ETAG=$(echo "$CURRENT_POLICY_JSON" | jq -r '.etag' 2> "$JQ_FINAL_OUTPUT_STDERR_FILE")
+  if [[ $? -ne 0 || -z "$ETAG" ]]; then
+    echo "Error: Failed to extract ETag from current policy, or ETag is empty." >&2
+    cat "$JQ_FINAL_OUTPUT_STDERR_FILE" >&2
+    rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE"
+    exit 1
+  fi
+   if [[ "$ETAG" == "null" ]]; then # If etag was literally null string
+    echo "Error: ETag value is 'null'. Cannot apply changes safely." >&2
+    rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE"
     exit 1
   fi
 
-  # Add the ETag to the modified policy JSON before applying it.
-  # The `set-iam-policy` command requires the ETag from the policy it's modifying.
-  FINAL_POLICY_TO_APPLY=$(echo "$MODIFIED_POLICY_JSON" | jq --arg etag "$ETAG" '.etag = $etag' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
 
-  # Apply the policy using gcloud. We pipe the JSON directly to stdin.
-  # Capture stderr to identify potential gcloud errors
-  APPLY_RESULT=$(echo "$FINAL_POLICY_TO_APPLY" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" --policy-file=/dev/stdin --format=json --verbosity=debug 2> >(tee /dev/stderr))
-
-  if [[ -z "$APPLY_RESULT" ]]; then
-    echo "Error: Failed to apply IAM policy. Check gcloud output for details." >&2
-    echo "This typically indicates insufficient permissions for the executor service account (e.g., missing roles/iam.securityAdmin) on project '$GCP_PROJECT_ID'." >&2
-    echo "Review the debug output above for more clues." >&2
+  FINAL_POLICY_TO_APPLY=$(echo "$MODIFIED_POLICY_JSON" | jq --arg etag "$ETAG" '.etag = $etag' 2> "$JQ_FINAL_OUTPUT_STDERR_FILE")
+  if [[ $? -ne 0 || -z "$FINAL_POLICY_TO_APPLY" ]]; then
+    echo "Error: Failed to inject ETag into the modified policy using jq, or result was empty." >&2
+    cat "$JQ_FINAL_OUTPUT_STDERR_FILE" >&2
+    rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE"
     exit 1
   fi
+
+  echo "--- DEBUG: Final policy to apply (with ETag) ---"
+  echo "$FINAL_POLICY_TO_APPLY" | jq . # For debugging
+  echo "--- END DEBUG ---"
+
+  GCLOUD_SET_POLICY_STDERR_FILE=$(mktemp)
+  APPLY_RESULT_JSON_FILE=$(mktemp)
+
+  if ! echo "$FINAL_POLICY_TO_APPLY" | gcloud projects set-iam-policy "$GCP_PROJECT_ID" /dev/stdin --format=json --quiet > "$APPLY_RESULT_JSON_FILE" 2> "$GCLOUD_SET_POLICY_STDERR_FILE"; then
+    echo "Error: 'gcloud projects set-iam-policy' command failed to apply the new policy." >&2
+    echo "Gcloud Stderr:" >&2
+    cat "$GCLOUD_SET_POLICY_STDERR_FILE" >&2
+    echo "Gcloud Stdout (if any):" >&2
+    cat "$APPLY_RESULT_JSON_FILE" >&2 # gcloud might output error structure to stdout
+    rm -f "$GCLOUD_SET_POLICY_STDERR_FILE" "$APPLY_RESULT_JSON_FILE" "$JQ_FINAL_OUTPUT_STDERR_FILE"
+    exit 1
+  fi
+  
+  GCLOUD_SET_POLICY_STDERR_CONTENT=$(cat "$GCLOUD_SET_POLICY_STDERR_FILE")
+  if [[ -n "$GCLOUD_SET_POLICY_STDERR_CONTENT" ]]; then
+    echo "Warning: 'gcloud projects set-iam-policy' produced stderr output even on success:" >&2
+    echo "$GCLOUD_SET_POLICY_STDERR_CONTENT" >&2
+  fi
+
+  APPLY_RESULT=$(cat "$APPLY_RESULT_JSON_FILE")
+  rm -f "$GCLOUD_SET_POLICY_STDERR_FILE" "$APPLY_RESULT_JSON_FILE"
 
   echo "IAM policy applied successfully."
   echo "New policy after application:"
-  echo "$APPLY_RESULT" | jq . 2> >(tee /dev/stderr) # Print the policy returned by gcloud after successful application
+  echo "$APPLY_RESULT" | jq . 2> "$JQ_FINAL_OUTPUT_STDERR_FILE" || {
+    echo "Error: jq failed to format the policy returned by 'set-iam-policy'." >&2
+    echo "Raw output from gcloud was:" >&2
+    echo "$APPLY_RESULT" >&2
+    cat "$JQ_FINAL_OUTPUT_STDERR_FILE" >&2
+    rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE"
+    # Don't exit here as policy was applied, but formatting failed.
+  }
 fi
 
+rm -f "$JQ_FINAL_OUTPUT_STDERR_FILE" # Clean up if it exists
 echo "--- Script Finished ---"
