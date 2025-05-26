@@ -2,41 +2,45 @@
 set -euo pipefail
 
 # assign_iam_roles.sh
-# This script automates assigning IAM roles to a Google Service Account and an Active Directory Group
+# This script automates assigning IAM roles to a Google Service Account or an Active Directory Group
 # within a GCP project. It supports dry-run and apply modes.
 # It uses ETags for optimistic concurrency control and ensures no role conditions are set.
-# This version adds support for optional bundled IAM roles (job functions).
+# This version adds support for optional bundled IAM roles (job functions) and allows selecting
+# the target (Service Account or AD Group) via a dropdown.
 
 # --- Configuration and Argument Parsing ---
 
 MODE=""
 GCP_PROJECT_ID=""
-GCP_SERVICE_ACCOUNT_EMAIL=""
-AD_GROUP_EMAIL=""
-IAM_ROLES_SA=""       # Comma-separated list of individual roles for the Service Account
-IAM_ROLES_AD=""       # Comma-separated list of individual roles for the AD Group
-BUNDLED_ROLES_SA=""   # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
-BUNDLED_ROLES_AD=""   # Name of bundled role for AD Group (e.g., "GenAI_DEVELOPER")
+TARGET_TYPE=""            # "service_account" or "ad_group"
+GCP_SERVICE_ACCOUNT_EMAIL="" # Only relevant if TARGET_TYPE is "service_account"
+AD_GROUP_EMAIL=""         # Only relevant if TARGET_TYPE is "ad_group"
+IAM_ROLES_SA=""           # Comma-separated list of individual roles for the Service Account
+IAM_ROLES_AD=""           # Comma-separated list of individual roles for the AD Group
+BUNDLED_ROLES_SA=""       # Name of bundled role for Service Account (e.g., "GenAI_ADMIN")
+BUNDLED_ROLES_AD=""       # Name of bundled role for AD Group (e.g., "GenAI_DEVELOPER")
 
 # Function to display usage information
 usage() {
   echo "Usage: $0 --mode <dry-run|apply> --project-id <GCP_PROJECT_ID> \\"
-  echo "          --service-account-email <SA_EMAIL> --ad-group-email <AD_GROUP_EMAIL> \\"
+  echo "          --target-type <service_account|ad_group> \\"
+  echo "          [--service-account-email <SA_EMAIL>] [--ad-group-email <AD_GROUP_EMAIL>] \\"
   echo "          [--roles-sa <ROLE1,ROLE2>] [--roles-ad <ROLE1,ROLE2>] \\"
   echo "          [--bundled-roles-sa <BUNDLE_NAME>] [--bundled-roles-ad <BUNDLE_NAME>]"
   echo ""
   echo "Arguments:"
   echo "  --mode                  : Operation mode: 'dry-run' (show changes) or 'apply' (implement changes)."
   echo "  --project-id            : The GCP Project ID."
-  echo "  --service-account-email : The email of the GCP Service Account to assign roles to."
-  echo "  --ad-group-email        : The email of the Active Directory Group to assign roles to (must be synced to GCP)."
-  echo "  --roles-sa              : (Optional) Comma-separated list of individual IAM roles for the Service Account."
-  echo "  --roles-ad              : (Optional) Comma-separated list of individual IAM roles for the AD Group."
-  echo "  --bundled-roles-sa      : (Optional) Name of a predefined bundled role for the Service Account (e.g., 'GenAI_ADMIN')."
-  echo "  --bundled-roles-ad      : (Optional) Name of a predefined bundled role for the AD Group (e.g., 'GenAI_DEVELOPER')."
+  echo "  --target-type           : The type of principal to assign roles to: 'service_account' or 'ad_group'."
+  echo "  --service-account-email : (Required if --target-type is 'service_account') The email of the GCP Service Account."
+  echo "  --ad-group-email        : (Required if --target-type is 'ad_group') The email of the Active Directory Group (must be synced to GCP)."
+  echo "  --roles-sa              : (Optional, used with --target-type service_account) Comma-separated individual IAM roles for the Service Account."
+  echo "  --roles-ad              : (Optional, used with --target-type ad_group) Comma-separated individual IAM roles for the AD Group."
+  echo "  --bundled-roles-sa      : (Optional, used with --target-type service_account) Name of a predefined bundled role for the Service Account."
+  echo "  --bundled-roles-ad      : (Optional, used with --target-type ad_group) Name of a predefined bundled role for the AD Group."
   echo ""
-  echo "Note: At least one of --roles-sa or --bundled-roles-sa must be provided if assigning to SA."
-  echo "Note: At least one of --roles-ad or --bundled-roles-ad must be provided if assigning to AD Group."
+  echo "Note: If --target-type is 'service_account', at least one of --roles-sa or --bundled-roles-sa must be provided."
+  echo "Note: If --target-type is 'ad_group', at least one of --roles-ad or --bundled-roles-ad must be provided."
   exit 1
 }
 
@@ -49,6 +53,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --project-id)
       GCP_PROJECT_ID="$2"
+      shift
+      ;;
+    --target-type)
+      TARGET_TYPE="$2"
       shift
       ;;
     --service-account-email)
@@ -83,9 +91,9 @@ while [[ "$#" -gt 0 ]]; do
   shift
 done
 
-# Validate required arguments
-if [[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$GCP_SERVICE_ACCOUNT_EMAIL" || -z "$AD_GROUP_EMAIL" ]]; then
-  echo "Error: --mode, --project-id, --service-account-email, and --ad-group-email are required."
+# --- Validate required arguments based on target type ---
+if [[ -z "$MODE" || -z "$GCP_PROJECT_ID" || -z "$TARGET_TYPE" ]]; then
+  echo "Error: --mode, --project-id, and --target-type are required."
   usage
 fi
 
@@ -94,25 +102,43 @@ if [[ "$MODE" != "dry-run" && "$MODE" != "apply" ]]; then
   usage
 fi
 
-# Validate that at least one set of roles (individual or bundled) is provided for SA and AD Group
-if [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]]; then
-  echo "Error: Either --roles-sa or --bundled-roles-sa (or both) must be provided for the Service Account."
-  usage
-fi
-if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
-  echo "Error: Either --roles-ad or --bundled-roles-ad (or both) must be provided for the AD Group."
+if [[ "$TARGET_TYPE" != "service_account" && "$TARGET_TYPE" != "ad_group" ]]; then
+  echo "Error: --target-type must be 'service_account' or 'ad_group'."
   usage
 fi
 
+if [[ "$TARGET_TYPE" == "service_account" ]]; then
+  if [[ -z "$GCP_SERVICE_ACCOUNT_EMAIL" ]]; then
+    echo "Error: --service-account-email is required when --target-type is 'service_account'."
+    usage
+  fi
+  if [[ -z "$IAM_ROLES_SA" && -z "$BUNDLED_ROLES_SA" ]]; then
+    echo "Error: At least one of --roles-sa or --bundled-roles-sa must be provided for the Service Account."
+    usage
+  fi
+elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+  if [[ -z "$AD_GROUP_EMAIL" ]]; then
+    echo "Error: --ad-group-email is required when --target-type is 'ad_group'."
+    usage
+  fi
+  if [[ -z "$IAM_ROLES_AD" && -z "$BUNDLED_ROLES_AD" ]]; then
+    echo "Error: At least one of --roles-ad or --bundled-roles-ad must be provided for the AD Group."
+    usage
+  fi
+fi
 
 echo "--- Starting IAM Role Assignment Script ($MODE mode) ---"
 echo "Project ID: $GCP_PROJECT_ID"
-echo "Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
-echo "AD Group: $AD_GROUP_EMAIL"
-echo "Individual Roles for SA: ${IAM_ROLES_SA:-None}"
-echo "Bundled Role for SA: ${BUNDLED_ROLES_SA:-None}"
-echo "Individual Roles for AD Group: ${IAM_ROLES_AD:-None}"
-echo "Bundled Role for AD Group: ${BUNDLED_ROLES_AD:-None}"
+echo "Target Type: $TARGET_TYPE"
+if [[ "$TARGET_TYPE" == "service_account" ]]; then
+  echo "Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
+  echo "Individual Roles for SA: ${IAM_ROLES_SA:-None}"
+  echo "Bundled Role for SA: ${BUNDLED_ROLES_SA:-None}"
+elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+  echo "AD Group: $AD_GROUP_EMAIL"
+  echo "Individual Roles for AD Group: ${IAM_ROLES_AD:-None}"
+  echo "Bundled Role for AD Group: ${BUNDLED_ROLES_AD:-None}"
+fi
 echo "------------------------------------------------------"
 
 # --- Pre-checks and Setup ---
@@ -226,64 +252,65 @@ add_or_update_member() {
   echo "$policy_json" # Return the modified policy JSON
 }
 
-# --- Consolidate and Process Service Account Roles ---
-ALL_SA_ROLES=""
-if [[ -n "$IAM_ROLES_SA" ]]; then
-  ALL_SA_ROLES="$IAM_ROLES_SA"
-fi
-if [[ -n "$BUNDLED_ROLES_SA" ]]; then
-  BUNDLED_ROLES_RESOLVED=$(get_bundled_roles "$BUNDLED_ROLES_SA")
+# --- Process Roles based on TARGET_TYPE ---
+if [[ "$TARGET_TYPE" == "service_account" ]]; then
+  ALL_SA_ROLES=""
+  if [[ -n "$IAM_ROLES_SA" ]]; then
+    ALL_SA_ROLES="$IAM_ROLES_SA"
+  fi
+  if [[ -n "$BUNDLED_ROLES_SA" ]]; then
+    BUNDLED_ROLES_RESOLVED=$(get_bundled_roles "$BUNDLED_ROLES_SA")
+    if [[ -n "$ALL_SA_ROLES" ]]; then
+      ALL_SA_ROLES="${ALL_SA_ROLES},${BUNDLED_ROLES_RESOLVED}"
+    else
+      ALL_SA_ROLES="$BUNDLED_ROLES_RESOLVED"
+    fi
+  fi
+
   if [[ -n "$ALL_SA_ROLES" ]]; then
-    ALL_SA_ROLES="${ALL_SA_ROLES},${BUNDLED_ROLES_RESOLVED}"
+    echo "Processing roles for Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
+    # Split the comma-separated roles string into an array
+    IFS=',' read -ra SA_ROLES_ARRAY <<< "$ALL_SA_ROLES"
+    for role in "${SA_ROLES_ARRAY[@]}"; do
+      # Trim whitespace from role name
+      role=$(echo "$role" | xargs)
+      if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
+        # Call the function to add or update the service account for each role
+        MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "serviceAccount" "$GCP_SERVICE_ACCOUNT_EMAIL")
+      fi
+    done
   else
-    ALL_SA_ROLES="$BUNDLED_ROLES_RESOLVED"
+    echo "No roles specified for Service Account. Skipping."
   fi
-fi
-
-if [[ -n "$ALL_SA_ROLES" ]]; then
-  echo "Processing roles for Service Account: $GCP_SERVICE_ACCOUNT_EMAIL"
-  # Split the comma-separated roles string into an array
-  IFS=',' read -ra SA_ROLES_ARRAY <<< "$ALL_SA_ROLES"
-  for role in "${SA_ROLES_ARRAY[@]}"; do
-    # Trim whitespace from role name
-    role=$(echo "$role" | xargs)
-    if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
-      # Call the function to add or update the service account for each role
-      MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "serviceAccount" "$GCP_SERVICE_ACCOUNT_EMAIL")
+elif [[ "$TARGET_TYPE" == "ad_group" ]]; then
+  ALL_AD_ROLES=""
+  if [[ -n "$IAM_ROLES_AD" ]]; then
+    ALL_AD_ROLES="$IAM_ROLES_AD"
+  fi
+  if [[ -n "$BUNDLED_ROLES_AD" ]]; then
+    BUNDLED_ROLES_RESOLVED=$(get_bundled_roles "$BUNDLED_ROLES_AD")
+    if [[ -n "$ALL_AD_ROLES" ]]; then
+      ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
+    else
+      ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
     fi
-  done
-else
-  echo "No roles specified for Service Account. Skipping."
-fi
+  fi
 
-# --- Consolidate and Process AD Group Roles ---
-ALL_AD_ROLES=""
-if [[ -n "$IAM_ROLES_AD" ]]; then
-  ALL_AD_ROLES="$IAM_ROLES_AD"
-fi
-if [[ -n "$BUNDLED_ROLES_AD" ]]; then
-  BUNDLED_ROLES_RESOLVED=$(get_bundled_roles "$BUNDLED_ROLES_AD")
   if [[ -n "$ALL_AD_ROLES" ]]; then
-    ALL_AD_ROLES="${ALL_AD_ROLES},${BUNDLED_ROLES_RESOLVED}"
+    echo "Processing roles for AD Group: $AD_GROUP_EMAIL"
+    # Split the comma-separated roles string into an array
+    IFS=',' read -ra AD_ROLES_ARRAY <<< "$ALL_AD_ROLES"
+    for role in "${AD_ROLES_ARRAY[@]}"; do
+      # Trim whitespace from role name
+      role=$(echo "$role" | xargs)
+      if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
+        # Call the function to add or update the AD group for each role
+        MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "group" "$AD_GROUP_EMAIL")
+      fi
+    done
   else
-    ALL_AD_ROLES="$BUNDLED_ROLES_RESOLVED"
+    echo "No roles specified for AD Group. Skipping."
   fi
-fi
-
-if [[ -n "$ALL_AD_ROLES" ]]; then
-  echo "Processing roles for AD Group: $AD_GROUP_EMAIL"
-  # Split the comma-separated roles string into an array
-  IFS=',' read -ra AD_ROLES_ARRAY <<< "$ALL_AD_ROLES"
-  for role in "${AD_ROLES_ARRAY[@]}"; do
-    # Trim whitespace from role name
-    role=$(echo "$role" | xargs)
-    if [[ -n "$role" ]]; then # Ensure role is not empty after trimming
-      # Call the function to add or update the AD group for each role
-      MODIFIED_POLICY_JSON=$(add_or_update_member "$MODIFIED_POLICY_JSON" "$role" "group" "$AD_GROUP_EMAIL")
-    fi
-  done
-else
-  echo "No roles specified for AD Group. Skipping."
 fi
 
 # --- Dry Run vs. Apply ---
