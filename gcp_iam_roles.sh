@@ -203,20 +203,31 @@ MODIFIED_POLICY_JSON="$CURRENT_POLICY_JSON"
 #   $3 = member type (e.g., "serviceAccount", "group", "user")
 #   $4 = member email (e.g., "my-sa@project.iam.gserviceaccount.com", "ad-group@example.com")
 add_or_update_member() {
-  local policy_json="$1"
+  local policy_json_input="$1" # Renamed to avoid confusion with function output
   local role="$2"
   local member_type="$3"
   local member_email="$4"
   local member_string="${member_type}:${member_email}"
+  local temp_policy_json="" # To hold intermediate jq results
+
+  echo "  --- Entering add_or_update_member for role '$role', member '$member_string' ---"
+  echo "  DEBUG: Input policy_json_input (first 200 chars): ${policy_json_input:0:200}..."
 
   # Check if a binding for this specific role already exists in the policy.
   # Redirect stderr to /dev/null for this check to avoid polluting output if role_exists is empty
-  local role_exists=$(echo "$policy_json" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
+  local role_exists=$(echo "$policy_json_input" | jq --arg role "$role" '.bindings[] | select(.role == $role)' 2>/dev/null)
+  local jq_exit_code=$?
+  if [[ $jq_exit_code -ne 0 && -n "$policy_json_input" ]]; then
+    echo "  ERROR: jq failed to check for existing role binding for role '$role'. Input might be malformed." >&2
+    echo "  DEBUG: jq command: echo \"\$policy_json_input\" | jq --arg role \"$role\" '.bindings[] | select(.role == \$role)'" >&2
+    exit 1 # Exit script if jq fails here
+  fi
+
 
   if [[ -z "$role_exists" ]]; then
     # If the role binding does not exist, add a new binding for this role and member.
     echo "  Adding new binding for role '$role' with member '$member_string'."
-    policy_json=$(echo "$policy_json" | jq --arg role "$role" --arg member "$member_string" '
+    temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings += [{
         "role": $role,
         "members": [$member]
@@ -224,16 +235,26 @@ add_or_update_member() {
         # gcloud prefers 'condition' to be absent if no condition is needed, rather than 'null'.
       }]
     ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
+    jq_exit_code=$?
+    if [[ $jq_exit_code -ne 0 ]]; then
+      echo "  ERROR: jq failed to add new binding for role '$role'. Check jq output above." >&2
+      exit 1 # Exit script if jq fails here
+    fi
   else
     # If the role binding exists, check if the member is already part of this binding.
-    local member_in_role=$(echo "$policy_json" | jq --arg role "$role" --arg member "$member_string" '
+    local member_in_role=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
       .bindings[] | select(.role == $role) | .members[] | select(. == $member)
     ' 2>/dev/null) # Redirect stderr to /dev/null for this check
+    jq_exit_code=$?
+    if [[ $jq_exit_code -ne 0 && -n "$policy_json_input" ]]; then
+      echo "  ERROR: jq failed to check for existing member in role '$role'. Input might be malformed." >&2
+      exit 1 # Exit script if jq fails here
+    fi
 
     if [[ -z "$member_in_role" ]]; then
       # If the member is not in the existing role binding, add them.
       echo "  Adding member '$member_string' to existing role '$role'."
-      policy_json=$(echo "$policy_json" | jq --arg role "$role" --arg member "$member_string" '
+      temp_policy_json=$(echo "$policy_json_input" | jq --arg role "$role" --arg member "$member_string" '
         .bindings |= map(
           if .role == $role then
             # Append the new member to the members array
@@ -243,11 +264,19 @@ add_or_update_member() {
           end
         )
       ' 2> >(tee /dev/stderr)) # Redirect jq errors to stderr
+      jq_exit_code=$?
+      if [[ $jq_exit_code -ne 0 ]]; then
+        echo "  ERROR: jq failed to add member to existing role '$role'. Check jq output above." >&2
+        exit 1 # Exit script if jq fails here
+      fi
     else
       echo "  Member '$member_string' already exists in role '$role'. Skipping."
+      temp_policy_json="$policy_json_input" # No change, so keep original
     fi
   fi
-  echo "$policy_json" # Return the modified policy JSON
+  echo "  DEBUG: Output policy_json (first 200 chars): ${temp_policy_json:0:200}..."
+  echo "  --- Exiting add_or_update_member ---"
+  echo "$temp_policy_json" # Return the modified policy JSON
 }
 
 # --- Function to resolve bundled roles ---
