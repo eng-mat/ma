@@ -11,36 +11,28 @@ on:
         description: 'The GCP Project ID to assign roles in'
         required: true
         type: string
-      gcp_service_account_email:
-        description: 'Optional: Email of the GCP Service Account to assign roles to (e.g., my-sa@my-project.iam.gserviceaccount.com)'
-        required: false
-        type: string
-      individual_roles_sa:
-        description: 'Optional: Comma-separated individual IAM roles for the Service Account (e.g., roles/viewer,roles/storage.objectViewer)'
-        required: false
-        type: string
-        default: ''
-      bundled_roles_sa:
-        description: 'Optional: Select a predefined bundled role for the Service Account'
-        required: false
+      target_type:
+        description: 'Select the type of principal to assign roles to'
+        required: true
         type: choice
         options:
-          - '' # Empty option for no bundled role
-          - 'GenAI_ADMIN'
-          - 'GenAI_DEVELOPER'
-          - 'CUSTOM_BUNDLE_1' # Example: Add more as needed in the shell script
-        default: ''
+          - 'service_account'
+          - 'ad_group'
+      gcp_service_account_email:
+        description: 'Email of the GCP Service Account (required if Target Type is Service Account)'
+        required: false # This is now optional in the UI, but script will validate based on target_type
+        type: string
       ad_group_email:
-        description: 'Optional: Email of the Active Directory Group to assign roles to (e.g., ad-group@your-domain.com)'
-        required: false
+        description: 'Email of the Active Directory Group (required if Target Type is AD Group)'
+        required: false # This is now optional in the UI, but script will validate based on target_type
         type: string
-      individual_roles_ad:
-        description: 'Optional: Comma-separated individual IAM roles for the AD Group (e.g., roles/editor,roles/compute.networkAdmin)'
+      individual_roles: # Combined input for individual roles for either SA or AD Group
+        description: 'Comma-separated individual IAM roles (e.g., roles/viewer,roles/storage.objectViewer)'
         required: false
         type: string
         default: ''
-      bundled_roles_ad:
-        description: 'Optional: Select a predefined bundled role for the AD Group'
+      bundled_role: # Combined input for bundled roles for either SA or AD Group
+        description: 'Select a predefined bundled role (e.g., GenAI_ADMIN)'
         required: false
         type: choice
         options:
@@ -90,15 +82,23 @@ jobs:
         id: dry_run_script
         run: |
           chmod +x ./assign_iam_roles.sh
-          ./assign_iam_roles.sh \
+          BASE_COMMAND="./assign_iam_roles.sh \
             --mode dry-run \
-            --project-id "${{ github.event.inputs.gcp_project_id }}" \
-            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
-            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
-            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
-            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
-            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
-            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}" > dry_run_output.txt 2>&1
+            --project-id \"${{ github.event.inputs.gcp_project_id }}\" \
+            --target-type \"${{ github.event.inputs.target_type }}\""
+
+          # Conditionally add service account or AD group email and roles
+          if [[ "${{ github.event.inputs.target_type }}" == "service_account" ]]; then
+            BASE_COMMAND+=" --service-account-email \"${{ github.event.inputs.gcp_service_account_email }}\" \
+                            --roles-sa \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-sa \"${{ github.event.inputs.bundled_role }}\""
+          elif [[ "${{ github.event.inputs.target_type }}" == "ad_group" ]]; then
+            BASE_COMMAND+=" --ad-group-email \"${{ github.event.inputs.ad_group_email }}\" \
+                            --roles-ad \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-ad \"${{ github.event.inputs.bundled_role }}\""
+          fi
+
+          eval "$BASE_COMMAND" > dry_run_output.txt 2>&1
 
       - name: Upload Dry Run Output as Artifact
         uses: actions/upload-artifact@v4
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: dry-run
     environment:
-      name: production # IMPORTANT: Replace with your actual GitHub Environment name
+      name: production # IMPORTANT: Replace your actual GitHub Environment name
     permissions:
       contents: read
       id-token: write
@@ -138,12 +138,20 @@ jobs:
       - name: Execute Apply Script
         run: |
           chmod +x ./assign_iam_roles.sh
-          ./assign_iam_roles.sh \
+          BASE_COMMAND="./assign_iam_roles.sh \
             --mode apply \
-            --project-id "${{ github.event.inputs.gcp_project_id }}" \
-            --service-account-email "${{ github.event.inputs.gcp_service_account_email }}" \
-            --ad-group-email "${{ github.event.inputs.ad_group_email }}" \
-            --roles-sa "${{ github.event.inputs.individual_roles_sa }}" \
-            --bundled-roles-sa "${{ github.event.inputs.bundled_roles_sa }}" \
-            --roles-ad "${{ github.event.inputs.individual_roles_ad }}" \
-            --bundled-roles-ad "${{ github.event.inputs.bundled_roles_ad }}"
+            --project-id \"${{ github.event.inputs.gcp_project_id }}\" \
+            --target-type \"${{ github.event.inputs.target_type }}\""
+
+          # Conditionally add service account or AD group email and roles
+          if [[ "${{ github.event.inputs.target_type }}" == "service_account" ]]; then
+            BASE_COMMAND+=" --service-account-email \"${{ github.event.inputs.gcp_service_account_email }}\" \
+                            --roles-sa \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-sa \"${{ github.event.inputs.bundled_role }}\""
+          elif [[ "${{ github.event.inputs.target_type }}" == "ad_group" ]]; then
+            BASE_COMMAND+=" --ad-group-email \"${{ github.event.inputs.ad_group_email }}\" \
+                            --roles-ad \"${{ github.event.inputs.individual_roles }}\" \
+                            --bundled-roles-ad \"${{ github.event.inputs.bundled_role }}\""
+          fi
+
+          eval "$BASE_COMMAND"
