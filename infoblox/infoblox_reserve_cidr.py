@@ -28,6 +28,7 @@ def find_next_available_cidr(session, infoblox_url, network_view, cidr_block_siz
         "Development_View": "172.16.0.0/16",
         "DMZ_View": "192.168.0.0/24",
         "NonRoutable_View": "10.200.0.0/16", # Example of another mapping
+        "gcp-hcb-shared-hub": "10.10.0.0/17" # Add your specific view/supernet from the error
     }
     supernet_ip = supernet_mapping.get(network_view)
 
@@ -123,6 +124,7 @@ def get_supernet_info(session, infoblox_url, network_view):
         "Development_View": "172.16.0.0/16",
         "DMZ_View": "192.168.0.0/24",
         "NonRoutable_View": "10.200.0.0/16",
+        "gcp-hcb-shared-hub": "10.10.0.0/17" # Add your specific view/supernet from the error
     }
     supernet_ip = supernet_mapping.get(network_view)
 
@@ -152,6 +154,7 @@ def validate_inputs(network_view, subnet_name, cidr_block_size):
         "Development_View": "172.16.0.0/16",
         "DMZ_View": "192.168.0.0/24",
         "NonRoutable_View": "10.200.0.0/16",
+        "gcp-hcb-shared-hub": "10.10.0.0/17" # Add your specific view/supernet from the error
     }
     if network_view not in supernet_mapping:
         print(f"Validation Error: Selected network view '{network_view}' is not defined in the script's supernet mapping.")
@@ -161,7 +164,7 @@ def validate_inputs(network_view, subnet_name, cidr_block_size):
 def main():
     parser = argparse.ArgumentParser(description="Infoblox CIDR Reservation Workflow Script")
     parser.add_argument("action", choices=["dry-run", "apply"], help="Action to perform: dry-run or apply")
-    parser.add_argument("--infoblox-url", required=True, help="Infoblox URL (e.g., https://infoblox.example.com)")
+    # REMOVED: parser.add_argument("--infoblox-url", required=True, help="Infoblox URL (e.g., https://infoblox.example.com)")
     # Username and password are now read from environment variables, not command-line arguments
     parser.add_argument("--network-view", required=True, help="Infoblox Network View/Container")
     parser.add_argument("--subnet-name", required=True, help="Name for the new subnet (used as comment)")
@@ -173,20 +176,21 @@ def main():
 
     args = parser.parse_args()
 
-    # Retrieve Infoblox username and password from environment variables
+    # Retrieve Infoblox username, password AND URL from environment variables
     infoblox_username = os.environ.get("INFOBLOX_USERNAME")
     infoblox_password = os.environ.get("INFOBLOX_PASSWORD")
+    infoblox_url = os.environ.get("INFOBLOX_URL") # <-- NEW: Get URL from environment
 
-    if not infoblox_username or not infoblox_password:
-        print("ERROR: Infoblox username or password not found in environment variables.")
-        print("Ensure INFOBLOX_USERNAME and INFOBLOX_PASSWORD are set in the GitHub Actions workflow environment.")
+    if not infoblox_username or not infoblox_password or not infoblox_url: # <-- NEW: Check URL
+        print("ERROR: Missing one or more required environment variables (INFOBLOX_USERNAME, INFOBLOX_PASSWORD, INFOBLOX_URL).")
+        print("Ensure these are set in the GitHub Actions workflow environment and retrieved from Secret Manager.")
         exit(1)
 
     if not validate_inputs(args.network_view, args.subnet_name, args.cidr_block_size):
         exit(1)
 
     # Establish Infoblox session using credentials from environment variables
-    session = get_infoblox_session(args.infoblox_url, infoblox_username, infoblox_password)
+    session = get_infoblox_session(infoblox_url, infoblox_username, infoblox_password) # <-- Pass the retrieved URL
     if not session:
         print("Failed to establish Infoblox session. Exiting.")
         exit(1)
@@ -194,7 +198,7 @@ def main():
     if args.action == "dry-run":
         print("\n--- Performing Dry Run ---")
         proposed_subnet = find_next_available_cidr(
-            session, args.infoblox_url, args.network_view, args.cidr_block_size
+            session, infoblox_url, args.network_view, args.cidr_block_size # <-- Pass the retrieved URL
         )
 
         if proposed_subnet:
@@ -206,7 +210,7 @@ def main():
 
             # Simulate the supernet status after reservation.
             supernet_after_reservation = get_supernet_info(
-                session, args.infoblox_url, args.network_view
+                session, infoblox_url, args.network_view # <-- Pass the retrieved URL
             )
             print(f"DRY RUN: Supernet Status (after hypothetical reservation): {supernet_after_reservation}")
 
@@ -231,7 +235,7 @@ def main():
         print(f"APPLY: Site Code: {args.site_code}")
 
         success = reserve_cidr(
-            session, args.infoblox_url, args.proposed_subnet, args.network_view, args.subnet_name, args.site_code
+            session, infoblox_url, args.proposed_subnet, args.network_view, args.subnet_name, args.site_code # <-- Pass the retrieved URL
         )
 
         if success:
