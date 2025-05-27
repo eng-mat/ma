@@ -8,19 +8,16 @@ on:
         required: true
         type: choice
         options:
-          # IMPORTANT: Keep these options updated with your actual Infoblox Network Views
-          - 'gcp-hcb-shared-hub' # Example from your error log
+          - 'gcp-hcb-shared-hub'
           - 'Production_View'
           - 'Development_View'
           - 'DMZ_View'
           - 'NonRoutable_View'
-      supernet_ip: # User selects the specific supernet CIDR
+      supernet_ip:
         description: 'Select the Supernet CIDR to reserve from (must correspond to Network View)'
         required: true
         type: choice
         options:
-          # --- ADDED COMMENTS TO SUPERNET OPTIONS ---
-          # This format displays the CIDR to the system and the comment to the user in the UI.
           - '10.10.0.0/17 # supernet-gcp-hcb-shared-hub'
           - '10.0.0.0/8 # Production Main Supernet'
           - '172.16.0.0/16 # Development Large Supernet'
@@ -35,16 +32,12 @@ on:
         required: true
         type: number
         default: 26
-      confirm_apply:
-        description: 'Type "true" to confirm applying the changes to Infoblox'
-        required: true
-        type: string
-        default: 'false'
+      # Removed 'confirm_apply' input - approval will be handled by Environment protection
 
 jobs:
   dry_run:
     runs-on: ubuntu-latest
-    environment: infoblox-dev
+    environment: infoblox-dev # Or your specific dev/staging environment
     permissions:
       id-token: write
       contents: read
@@ -68,7 +61,6 @@ jobs:
       - name: Get Infoblox Credentials from Secret Manager
         id: get-secrets
         run: |
-          # Replace 'YOUR_GCP_PROJECT_ID' with your actual GCP Project ID
           INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret=INFOBLOX_USERNAME --project=YOUR_GCP_PROJECT_ID)
           INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret=INFOBLOX_PASSWORD --project=YOUR_GCP_PROJECT_ID)
 
@@ -83,12 +75,11 @@ jobs:
       - name: Run Infoblox Dry Run Script
         id: infoblox_dry_run
         run: |
-          # Extract only the CIDR part if a comment is present (e.g., "10.10.0.0/17 # comment")
           SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
           python .github/scripts/infoblox_reserve_cidr.py dry-run \
             --infoblox-url ${{ secrets.INFOBLOX_URL }} \
             --network-view ${{ github.event.inputs.network_view }} \
-            --supernet-ip "${SELECTED_SUPERNET_IP}" \ # Use the extracted CIDR
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \
             --subnet-name "${{ github.event.inputs.subnet_name }}" \
             --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
             --site-code "GCP"
@@ -107,9 +98,10 @@ jobs:
 
   apply:
     runs-on: ubuntu-latest
-    environment: infoblox-prod
+    # --- IMPORTANT: This environment should be configured for required reviewers ---
+    environment: infoblox-prod # This environment will trigger manual approval
     needs: dry_run
-    if: success() && github.event.inputs.confirm_apply == 'true'
+    if: success() # Only run if the dry_run job succeeded
     permissions:
       id-token: write
       contents: read
@@ -145,12 +137,11 @@ jobs:
 
       - name: Run Infoblox Apply Script
         run: |
-          # Extract only the CIDR part if a comment is present
           SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
           python .github/scripts/infoblox_reserve_cidr.py apply \
             --infoblox-url ${{ secrets.INFOBLOX_URL }} \
             --network-view ${{ github.event.inputs.network_view }} \
-            --supernet-ip "${SELECTED_SUPERNET_IP}" \ # Use the extracted CIDR
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \
             --subnet-name "${{ github.event.inputs.subnet_name }}" \
             --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
             --site-code "GCP" \
