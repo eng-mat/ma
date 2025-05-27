@@ -14,19 +14,18 @@ on:
           - 'Development_View'
           - 'DMZ_View'
           - 'NonRoutable_View'
-      supernet_ip: # NEW INPUT: User selects the specific supernet CIDR
+      supernet_ip: # User selects the specific supernet CIDR
         description: 'Select the Supernet CIDR to reserve from (must correspond to Network View)'
         required: true
         type: choice
         options:
-          # IMPORTANT: Hardcode your known supernet CIDRs here.
-          # The user is responsible for selecting a supernet that
-          # logically belongs to the selected Network View.
-          - '10.10.0.0/17' # Example from your error log
-          - '10.0.0.0/8'
-          - '172.16.0.0/16'
-          - '192.168.0.0/24'
-          - '10.200.0.0/16'
+          # --- ADDED COMMENTS TO SUPERNET OPTIONS ---
+          # This format displays the CIDR to the system and the comment to the user in the UI.
+          - '10.10.0.0/17 # supernet-gcp-hcb-shared-hub'
+          - '10.0.0.0/8 # Production Main Supernet'
+          - '172.16.0.0/16 # Development Large Supernet'
+          - '192.168.0.0/24 # DMZ Restricted Supernet'
+          - '10.200.0.0/16 # Non-Routable Internal Use'
       subnet_name:
         description: 'Subnet Name (will be used as comment in Infoblox)'
         required: true
@@ -84,10 +83,12 @@ jobs:
       - name: Run Infoblox Dry Run Script
         id: infoblox_dry_run
         run: |
+          # Extract only the CIDR part if a comment is present (e.g., "10.10.0.0/17 # comment")
+          SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
           python .github/scripts/infoblox_reserve_cidr.py dry-run \
             --infoblox-url ${{ secrets.INFOBLOX_URL }} \
             --network-view ${{ github.event.inputs.network_view }} \
-            --supernet-ip ${{ github.event.inputs.supernet_ip }} \ # Pass supernet_ip from input
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \ # Use the extracted CIDR
             --subnet-name "${{ github.event.inputs.subnet_name }}" \
             --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
             --site-code "GCP"
@@ -144,10 +145,12 @@ jobs:
 
       - name: Run Infoblox Apply Script
         run: |
+          # Extract only the CIDR part if a comment is present
+          SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
           python .github/scripts/infoblox_reserve_cidr.py apply \
             --infoblox-url ${{ secrets.INFOBLOX_URL }} \
             --network-view ${{ github.event.inputs.network_view }} \
-            --supernet-ip ${{ github.event.inputs.supernet_ip }} \ # Pass supernet_ip from input
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \ # Use the extracted CIDR
             --subnet-name "${{ github.event.inputs.subnet_name }}" \
             --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
             --site-code "GCP" \
