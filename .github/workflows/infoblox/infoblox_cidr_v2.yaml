@@ -1,0 +1,162 @@
+name: Infoblox CIDR Reservation
+
+on:
+  workflow_dispatch:
+    inputs:
+      network_view:
+        description: 'Select the Network View/Container'
+        required: true
+        type: choice
+        options:
+          - 'gcp-hcb-shared-hub'
+          - 'Production_View'
+          - 'Development_View'
+          - 'DMZ_View'
+          - 'NonRoutable_View'
+      supernet_ip:
+        description: 'Select the Supernet CIDR to reserve from (must correspond to Network View)'
+        required: true
+        type: choice
+        options:
+          - '10.10.0.0/17 # supernet-gcp-hcb-shared-hub'
+          - '10.0.0.0/8 # Production Main Supernet'
+          - '172.16.0.0/16 # Development Large Supernet'
+          - '192.168.0.0/24 # DMZ Restricted Supernet'
+          - '10.200.0.0/16 # Non-Routable Internal Use'
+      subnet_name:
+        description: 'Subnet Name (will be used as comment in Infoblox)'
+        required: true
+        type: string
+      cidr_block_size:
+        description: 'CIDR Block Size (e.g., 26 for /26)'
+        required: true
+        type: number
+        default: 26
+
+jobs:
+  dry_run:
+    runs-on: ubuntu-latest
+    environment: infoblox-dev
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Authenticate to Google Cloud
+        id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+          create_credentials_file: true
+
+      - name: Get Infoblox Credentials from Secret Manager
+        id: get-secrets
+        run: |
+          # Retrieve the *names* of the secrets from GitHub secrets
+          SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
+          SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
+
+          # Use those names to fetch the *actual values* from GCP Secret Manager
+          # Replace 'YOUR_GCP_PROJECT_ID' with your actual GCP Project ID
+          INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project=YOUR_GCP_PROJECT_ID)
+          INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project=YOUR_GCP_PROJECT_ID)
+
+          echo "INFOBLOX_USERNAME=$INFOBLOX_USERNAME" >> $GITHUB_ENV
+          echo "INFOBLOX_PASSWORD=$INFOBLOX_PASSWORD" >> $GITHUB_ENV
+        env:
+          GCLOUD_PROJECT: YOUR_GCP_PROJECT_ID
+
+      - name: Install Python dependencies
+        run: pip install requests
+
+      - name: Run Infoblox Dry Run Script
+        id: infoblox_dry_run
+        run: |
+          SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
+          python .github/scripts/infoblox_reserve_cidr.py dry-run \
+            --infoblox-url ${{ secrets.INFOBLOX_URL }} \
+            --network-view ${{ github.event.inputs.network_view }} \
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \
+            --subnet-name "${{ github.event.inputs.subnet_name }}" \
+            --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
+            --site-code "GCP"
+        env:
+          INFOBLOX_USERNAME: ${{ env.INFOBLOX_USERNAME }}
+          INFOBLOX_PASSWORD: ${{ env.INFOBLOX_PASSWORD }}
+          INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
+
+      - name: Capture Dry Run Output
+        run: |
+          echo "proposed_subnet=$(echo '${{ steps.infoblox_dry_run.outputs.proposed_subnet }}' | sed 's/\"//g')" >> $GITHUB_OUTPUT
+          echo "supernet_after_reservation=$(echo '${{ steps.infoblox_dry_run.outputs.supernet_after_reservation }}' | sed 's/\"//g')" >> $GITHUB_OUTPUT
+    outputs:
+      proposed_subnet: ${{ steps.infoblox_dry_run.outputs.proposed_subnet }}
+      supernet_after_reservation: ${{ steps.infoblox_dry_run.outputs.supernet_after_reservation }}
+
+  apply:
+    runs-on: ubuntu-latest
+    environment: infoblox-prod
+    needs: dry_run
+    if: success()
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Authenticate to Google Cloud
+        id: 'auth'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+          create_credentials_file: true
+
+      - name: Get Infoblox Credentials from Secret Manager
+        id: get-secrets
+        run: |
+          # Retrieve the *names* of the secrets from GitHub secrets
+          SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
+          SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
+
+          # Use those names to fetch the *actual values* from GCP Secret Manager
+          INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project=YOUR_GCP_PROJECT_ID)
+          INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project=YOUR_GCP_PROJECT_ID)
+          echo "INFOBLOX_USERNAME=$INFOBLOX_USERNAME" >> $GITHUB_ENV
+          echo "INFOBLOX_PASSWORD=$INFOBLOX_PASSWORD" >> $GITHUB_ENV
+        env:
+          GCLOUD_PROJECT: YOUR_GCP_PROJECT_ID
+
+      - name: Install Python dependencies
+        run: pip install requests
+
+      - name: Run Infoblox Apply Script
+        run: |
+          SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
+          python .github/scripts/infoblox_reserve_cidr.py apply \
+            --infoblox-url ${{ secrets.INFOBLOX_URL }} \
+            --network-view ${{ github.event.inputs.network_view }} \
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \
+            --subnet-name "${{ github.event.inputs.subnet_name }}" \
+            --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
+            --site-code "GCP" \
+            --proposed-subnet "${{ needs.dry_run.outputs.proposed_subnet }}" \
+            --supernet-after-reservation "${{ needs.dry_run.outputs.supernet_after_reservation }}"
+        env:
+          INFOBLOX_USERNAME: ${{ env.INFOBLOX_USERNAME }}
+          INFOBLOX_PASSWORD: ${{ env.INFOBLOX_PASSWORD }}
+          INFOBLOX_URL: ${{ secrets.INFOBLOX_URL }}
