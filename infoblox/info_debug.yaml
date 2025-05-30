@@ -1,0 +1,67 @@
+- name: Get Infoblox Credentials from Secret Manager
+        id: get-secrets
+        run: |
+          set -x  # Enable command tracing
+
+          # --- BEGIN DEBUGGING ---
+          echo "DEBUG: Value of secrets.INFOBLOX_SECRET_USERNAME from GitHub: '${{ secrets.INFOBLOX_SECRET_USERNAME }}'"
+          echo "DEBUG: Value of secrets.INFOBLOX_SECRET_PASSWORD from GitHub: '${{ secrets.INFOBLOX_SECRET_PASSWORD }}'"
+          echo "DEBUG: Value of GCLOUD_PROJECT from environment: '${GCLOUD_PROJECT}'"
+          # --- END DEBUGGING ---
+
+          SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
+          SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
+
+          # --- BEGIN DEBUGGING ---
+          echo "DEBUG: Value of shell variable SECRET_USERNAME_NAME: '${SECRET_USERNAME_NAME}'"
+          echo "DEBUG: Value of shell variable SECRET_PASSWORD_NAME: '${SECRET_PASSWORD_NAME}'"
+          # --- END DEBUGGING ---
+
+          if [ -z "${SECRET_USERNAME_NAME}" ]; then
+            echo "ERROR: SECRET_USERNAME_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_USERNAME'."
+            exit 1
+          fi
+          if [ -z "${GCLOUD_PROJECT}" ]; then
+            echo "ERROR: GCLOUD_PROJECT is empty. Check environment variable setup."
+            exit 1
+          fi
+
+          echo "Attempting to fetch INFOBLOX_USERNAME..."
+          INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project="${GCLOUD_PROJECT}")
+          
+          # Check if the gcloud command failed and INFOBLOX_USERNAME captured an error
+          # This is a basic check; gcloud might return 0 even on some types of failures to access a secret.
+          if [ $? -ne 0 ] || [[ "${INFOBLOX_USERNAME}" == *"ERROR:"* ]] || [[ "${INFOBLOX_USERNAME}" == *"command not found"* ]]; then
+            echo "ERROR: Failed to fetch INFOBLOX_USERNAME. gcloud command output was:"
+            echo "${INFOBLOX_USERNAME}"
+            # Optionally, you might want to exit here if a clean secret value is critical
+            # exit 1 
+          fi
+          echo "INFOBLOX_USERNAME fetched (first 50 chars): $(echo "${INFOBLOX_USERNAME}" | cut -c 1-50)"
+
+
+          if [ -z "${SECRET_PASSWORD_NAME}" ]; then
+            echo "ERROR: SECRET_PASSWORD_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_PASSWORD'."
+            exit 1
+          fi
+
+          echo "Attempting to fetch INFOBLOX_PASSWORD..."
+          INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project="${GCLOUD_PROJECT}")
+
+          if [ $? -ne 0 ] || [[ "${INFOBLOX_PASSWORD}" == *"ERROR:"* ]] || [[ "${INFOBLOX_PASSWORD}" == *"command not found"* ]]; then
+            echo "ERROR: Failed to fetch INFOBLOX_PASSWORD. gcloud command output was:"
+            echo "${INFOBLOX_PASSWORD}"
+            # exit 1
+          fi
+          echo "INFOBLOX_PASSWORD fetched (first 50 chars): $(echo "${INFOBLOX_PASSWORD}" | cut -c 1-50)"
+
+          set +x # Disable command tracing
+
+          echo "INFOBLOX_USERNAME=${INFOBLOX_USERNAME}" >> $GITHUB_ENV
+          echo "INFOBLOX_PASSWORD=${INFOBLOX_PASSWORD}" >> $GITHUB_ENV
+        env:
+          # Ensure GCLOUD_PROJECT is correctly set.
+          # Example: GCLOUD_PROJECT: ${{ secrets.YOUR_GCP_PROJECT_ID_SECRET }}
+          # OR for a GitHub variable: GCLOUD_PROJECT: ${{ vars.YOUR_GCP_PROJECT_ID_VARIABLE }}
+          # For now, I'll keep your original placeholder style, assuming you replace it.
+          GCLOUD_PROJECT: YOUR_GCP_PROJECT_ID # Make sure this is your actual GCP Project ID or a correct reference
