@@ -1,73 +1,17 @@
-- name: Get Infoblox Credentials from Secret Manager
-        id: get-secrets
+- name: Run Infoblox Dry Run Script # Or 'Run Infoblox Apply Script'
+        id: infoblox_dry_run # Or 'infoblox_apply'
         run: |
-          set -x  # Enable command tracing
-
-          # Debugging GitHub contexts (these are expanded by Actions before script runs)
-          echo "DEBUG FROM YAML: GitHub secret 'INFOBLOX_SECRET_USERNAME' is '${{ secrets.INFOBLOX_SECRET_USERNAME }}'"
-          echo "DEBUG FROM YAML: GitHub secret 'INFOBLOX_SECRET_PASSWORD' is '${{ secrets.INFOBLOX_SECRET_PASSWORD }}'"
-          echo "DEBUG FROM YAML: GitHub var for GCLOUD_PROJECT (e.g., vars.AUTOMATION_PROJECT_ID) is '${{ vars.AUTOMATION_PROJECT_ID }}'" # Adjust var name as needed
-
-          # Assign to shell variables
-          # Ensure INFOBLOX_SECRET_USERNAME and INFOBLOX_SECRET_PASSWORD are the EXACT names of your GitHub secrets
-          SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
-          SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
-          # GCLOUD_PROJECT is already an environment variable from the 'env:' block
-
-          # Debugging shell variables
-          echo "DEBUG SHELL VAR: SECRET_USERNAME_NAME is '${SECRET_USERNAME_NAME}'"
-          echo "DEBUG SHELL VAR: SECRET_PASSWORD_NAME is '${SECRET_PASSWORD_NAME}'"
-          echo "DEBUG SHELL VAR: GCLOUD_PROJECT is '${GCLOUD_PROJECT}'" # This prints the environment variable
-
-          # Validations
-          if [ -z "${SECRET_USERNAME_NAME}" ]; then
-            echo "ERROR: Shell variable SECRET_USERNAME_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_USERNAME' and its name."
-            exit 1
-          fi
-          if [ -z "${SECRET_PASSWORD_NAME}" ]; then
-            echo "ERROR: Shell variable SECRET_PASSWORD_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_PASSWORD' and its name."
-            exit 1
-          fi
-          if [ -z "${GCLOUD_PROJECT}" ]; then
-            echo "ERROR: Shell variable GCLOUD_PROJECT is empty. Check 'env:' block and the GitHub var/secret it references (e.g., vars.AUTOMATION_PROJECT_ID)."
-            exit 1
-          fi
-
-          echo "Attempting to fetch INFOBLOX_USERNAME..."
-          INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project="${GCLOUD_PROJECT}")
+          # V V V THIS LINE MUST BE EXACTLY AS BELOW V V V
+          SELECTED_SUPERNET_IP=$(echo "${{ github.event.inputs.supernet_ip }}" | awk '{print $1}')
           
-          if [ $? -ne 0 ] || [[ "${INFOBLOX_USERNAME}" == *"ERROR:"* ]] || [[ "${INFOBLOX_USERNAME}" == *"command not found"* ]]; then
-            echo "ERROR: Failed to fetch INFOBLOX_USERNAME. gcloud command exit status: $?. Output:"
-            echo "${INFOBLOX_USERNAME}"
-            # exit 1 
-          fi
-          echo "INFOBLOX_USERNAME fetched (status indicated above, length: $(echo "${INFOBLOX_USERNAME}" | wc -c))"
+          echo "DEBUG YAML: SELECTED_SUPERNET_IP is '${SELECTED_SUPERNET_IP}'" # Add this to verify
 
-          echo "Attempting to fetch INFOBLOX_PASSWORD..."
-          INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project="${GCLOUD_PROJECT}")
-
-          if [ $? -ne 0 ] || [[ "${INFOBLOX_PASSWORD}" == *"ERROR:"* ]] || [[ "${INFOBLOX_PASSWORD}" == *"command not found"* ]]; then
-            echo "ERROR: Failed to fetch INFOBLOX_PASSWORD. gcloud command exit status: $?. Output:"
-            echo "${INFOBLOX_PASSWORD}"
-            # exit 1
-          fi
-          echo "INFOBLOX_PASSWORD fetched (status indicated above, length: $(echo "${INFOBLOX_PASSWORD}" | wc -c))"
-
-          set +x # Disable command tracing
-
-          if [ -z "$INFOBLOX_USERNAME" ]; then
-            echo "CRITICAL ERROR: INFOBLOX_USERNAME is empty after attempted fetch."
-            # exit 1
-          fi
-          if [ -z "$INFOBLOX_PASSWORD" ]; then
-            echo "CRITICAL ERROR: INFOBLOX_PASSWORD is empty after attempted fetch."
-            # exit 1
-          fi
-
-          echo "INFOBLOX_USERNAME=${INFOBLOX_USERNAME}" >> $GITHUB_ENV
-          echo "INFOBLOX_PASSWORD=${INFOBLOX_PASSWORD}" >> $GITHUB_ENV
+          python your_script_name.py dry-run \
+            --infoblox-url ${{ secrets.INFOBLOX_URL }} \
+            --network-view "${{ github.event.inputs.network_view }}" \
+            --supernet-ip "${SELECTED_SUPERNET_IP}" \
+            --subnet-name "${{ github.event.inputs.subnet_name }}" \
+            --cidr-block-size ${{ github.event.inputs.cidr_block_size }} \
+            --site-code "GCP"
         env:
-          # Replace 'AUTOMATION_PROJECT_ID' with the ACTUAL NAME of your GitHub Actions variable
-          GCLOUD_PROJECT: ${{ vars.AUTOMATION_PROJECT_ID }}
-          # If your project ID is in a secret, use:
-          # GCLOUD_PROJECT: ${{ secrets.AUTOMATION_PROJECT_ID_SECRET }}
+          # ... your env vars
