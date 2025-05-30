@@ -66,7 +66,7 @@ jobs:
             echo "Using default Vertex AI service account for IAM (Dry Run): ${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com"
           fi
 
-      - name: Dry Run: Check if Vertex AI service account exists and would grant AI Platform User role
+      - name: Dry Run - Check if Vertex AI service account exists and would grant AI Platform User role
         run: |
           SA_EMAIL="${{ env.SERVICE_ACCOUNT_EMAIL }}"
           PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
@@ -91,7 +91,7 @@ jobs:
           fi
           echo "--------------------------------------------------------"
 
-      - name: Dry Run: Would grant API Keys Viewer role to specified user group (if provided)
+      - name: Dry Run - Would grant API Keys Viewer role to specified user group (if provided)
         if: github.event.inputs.user_group_email != ''
         run: |
           USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
@@ -109,7 +109,7 @@ jobs:
           echo "Dry run for IAM role '$API_KEY_VIEWER_ROLE' to '$USER_GROUP_EMAIL' completed."
           echo "----------------------------------------"
 
-      - name: Dry Run: Would create restricted API key
+      - name: Dry Run - Would create restricted API key
         run: |
           API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
           PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
@@ -152,7 +152,7 @@ jobs:
             echo "Using default Vertex AI service account for IAM (Apply Run): ${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com"
           fi
 
-      - name: Apply: Check if Vertex AI service account exists and grant AI Platform User role
+      - name: Apply - Check if Vertex AI service account exists and grant AI Platform User role
         run: |
           SA_EMAIL="${{ env.SERVICE_ACCOUNT_EMAIL }}"
           PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
@@ -175,7 +175,7 @@ jobs:
           fi
           echo "--------------------------------------------------------"
 
-      - name: Apply: Grant API Keys Viewer role to specified user group (if provided)
+      - name: Apply - Grant API Keys Viewer role to specified user group (if provided)
         if: github.event.inputs.user_group_email != ''
         run: |
           USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
@@ -191,7 +191,7 @@ jobs:
           echo "IAM role '$API_KEY_VIEWER_ROLE' successfully granted to '$USER_GROUP_EMAIL'."
           echo "----------------------------------------"
 
-      - name: Apply: Create restricted API key
+      - name: Apply - Create restricted API key
         id: create_key_apply_run
         run: |
           API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
