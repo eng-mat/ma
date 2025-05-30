@@ -1,0 +1,241 @@
+name: Create Restricted Vertex AI API Key (Dry Run & Apply)
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'GCP Project ID where the API key will be created and IAM roles granted.'
+        required: true
+        type: string
+      custom_service_account_email:
+        description: 'Optional: Custom service account email for Vertex AI IAM role granting. If empty, uses vertexai-sa@{PROJECT_ID}.iam.gserviceaccount.com.'
+        required: false
+        type: string
+      user_group_email:
+        description: 'Optional: Google Group email (e.g., your-ad-group@yourdomain.com) to grant API Keys Viewer role. Users in this group can retrieve the key themselves.'
+        required: false
+        type: string
+
+env:
+  VERTEXAI_SA_NAME: 'vertexai-sa'
+  API_TARGETS: 'service=aiplatform.googleapis.com;methods=*,service=generativelanguage.googleapis.com;methods=*'
+  IAM_ROLE_VERTEX_AI_USER: 'roles/aiplatform.user' # Specific role for Vertex AI service account
+  IAM_ROLE_API_KEY_VIEWER: 'roles/serviceusage.apiKeysViewer' # Specific role to allow viewing API keys
+
+jobs:
+  setup-gcp:
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ inputs.project_id }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ inputs.project_id }}
+          workload_identity_provider: 'projects/YOUR_GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_WORKLOAD_IDENTITY_POOL_ID/providers/YOUR_WORKLOAD_IDENTITY_PROVIDER_ID'
+          service_account: 'YOUR_GCP_WORKLOAD_IDENTITY_SA_EMAIL'
+
+      - name: Set PROJECT_ID as environment variable
+        run: echo "PROJECT_ID=${{ inputs.project_id }}" >> $GITHUB_ENV
+
+  dry-run-changes:
+    runs-on: ubuntu-latest
+    needs: setup-gcp
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Dry Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ needs.setup-gcp.outputs.project_id }}
+          workload_identity_provider: 'projects/YOUR_GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_WORKLOAD_IDENTITY_POOL_ID/providers/YOUR_WORKLOAD_IDENTITY_PROVIDER_ID'
+          service_account: 'YOUR_GCP_WORKLOAD_IDENTITY_SA_EMAIL'
+
+      - name: Determine Vertex AI service account email (Dry Run)
+        id: set_sa_email_dry_run
+        run: |
+          if [ -n "${{ github.event.inputs.custom_service_account_email }}" ]; then
+            echo "SERVICE_ACCOUNT_EMAIL=${{ github.event.inputs.custom_service_account_email }}" >> $GITHUB_ENV
+            echo "Using custom service account for IAM (Dry Run): ${{ github.event.inputs.custom_service_account_email }}"
+          else
+            echo "SERVICE_ACCOUNT_EMAIL=${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "Using default Vertex AI service account for IAM (Dry Run): ${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com"
+          fi
+
+      - name: Dry Run: Check if Vertex AI service account exists and would grant AI Platform User role
+        run: |
+          SA_EMAIL="${{ env.SERVICE_ACCOUNT_EMAIL }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          IAM_ROLE="${{ env.IAM_ROLE_VERTEX_AI_USER }}"
+
+          echo "--- DRY RUN: IAM Role for Vertex AI Service Account ---"
+          echo "Attempting to describe service account: $SA_EMAIL in project $PROJECT_ID"
+          gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" > /dev/null 2>&1
+          SA_EXISTS=$?
+
+          if [ $SA_EXISTS -eq 0 ]; then
+            echo "Service account '$SA_EMAIL' exists. Would attempt to grant IAM role '$IAM_ROLE'..."
+            # Use --dry-run=true to simulate the binding
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:$SA_EMAIL" \
+              --role="$IAM_ROLE" \
+              --condition=None \
+              --dry-run=true
+            echo "Dry run for IAM role '$IAM_ROLE' to '$SA_EMAIL' completed."
+          else
+            echo "Service account '$SA_EMAIL' does not exist or access is denied. Would skip IAM role granting for Vertex AI SA."
+          fi
+          echo "--------------------------------------------------------"
+
+      - name: Dry Run: Would grant API Keys Viewer role to specified user group (if provided)
+        if: github.event.inputs.user_group_email != ''
+        run: |
+          USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          API_KEY_VIEWER_ROLE="${{ env.IAM_ROLE_API_KEY_VIEWER }}"
+
+          echo "--- DRY RUN: IAM Role for User Group ---"
+          echo "Would attempt to grant IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL' in project '$PROJECT_ID'..."
+          # Use --dry-run=true to simulate the binding
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="group:$USER_GROUP_EMAIL" \
+            --role="$API_KEY_VIEWER_ROLE" \
+            --condition=None \
+            --dry-run=true
+          echo "Dry run for IAM role '$API_KEY_VIEWER_ROLE' to '$USER_GROUP_EMAIL' completed."
+          echo "----------------------------------------"
+
+      - name: Dry Run: Would create restricted API key
+        run: |
+          API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          CIDR_RANGE="${{ vars.CIDR_RANGE }}"
+          API_TARGETS="${{ env.API_TARGETS }}"
+
+          echo "--- DRY RUN: API Key Creation ---"
+          echo "The following command would be executed to create the API key:"
+          echo "gcloud services api-keys create \\"
+          echo "  --project=\"$PROJECT_ID\" \\"
+          echo "  --display-name=\"$API_KEY_NAME\" \\"
+          echo "  --allowed-ips=\"$CIDR_RANGE\" \\"
+          echo "  --api-target-restriction=\"$API_TARGETS\" \\"
+          echo "  --format=\"json\""
+          echo "No actual API key will be created during this dry run."
+          echo "---------------------------------"
+
+  apply-changes:
+    runs-on: ubuntu-latest
+    needs: [setup-gcp, dry-run-changes] # Ensure setup and dry run are successful
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Apply Run)
+        uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: ${{ needs.setup-gcp.outputs.project_id }}
+          workload_identity_provider: 'projects/YOUR_GCP_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_WORKLOAD_IDENTITY_POOL_ID/providers/YOUR_WORKLOAD_IDENTITY_PROVIDER_ID'
+          service_account: 'YOUR_GCP_WORKLOAD_IDENTITY_SA_EMAIL'
+
+      - name: Determine Vertex AI service account email (Apply Run)
+        id: set_sa_email_apply_run
+        run: |
+          if [ -n "${{ github.event.inputs.custom_service_account_email }}" ]; then
+            echo "SERVICE_ACCOUNT_EMAIL=${{ github.event.inputs.custom_service_account_email }}" >> $GITHUB_ENV
+            echo "Using custom service account for IAM (Apply Run): ${{ github.event.inputs.custom_service_account_email }}"
+          else
+            echo "SERVICE_ACCOUNT_EMAIL=${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com" >> $GITHUB_ENV
+            echo "Using default Vertex AI service account for IAM (Apply Run): ${{ env.VERTEXAI_SA_NAME }}@${{ needs.setup-gcp.outputs.project_id }}.iam.gserviceaccount.com"
+          fi
+
+      - name: Apply: Check if Vertex AI service account exists and grant AI Platform User role
+        run: |
+          SA_EMAIL="${{ env.SERVICE_ACCOUNT_EMAIL }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          IAM_ROLE="${{ env.IAM_ROLE_VERTEX_AI_USER }}"
+
+          echo "--- APPLY RUN: IAM Role for Vertex AI Service Account ---"
+          echo "Attempting to describe service account: $SA_EMAIL in project $PROJECT_ID"
+          gcloud iam service-accounts describe "$SA_EMAIL" --project="$PROJECT_ID" > /dev/null 2>&1
+          SA_EXISTS=$?
+
+          if [ $SA_EXISTS -eq 0 ]; then
+            echo "Service account '$SA_EMAIL' exists. Granting IAM role '$IAM_ROLE'..."
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:$SA_EMAIL" \
+              --role="$IAM_ROLE" \
+              --condition=None
+            echo "IAM role '$IAM_ROLE' successfully granted to '$SA_EMAIL'."
+          else
+            echo "Service account '$SA_EMAIL' does not exist or access is denied. Skipping IAM role granting for Vertex AI SA."
+          fi
+          echo "--------------------------------------------------------"
+
+      - name: Apply: Grant API Keys Viewer role to specified user group (if provided)
+        if: github.event.inputs.user_group_email != ''
+        run: |
+          USER_GROUP_EMAIL="${{ github.event.inputs.user_group_email }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          API_KEY_VIEWER_ROLE="${{ env.IAM_ROLE_API_KEY_VIEWER }}"
+
+          echo "--- APPLY RUN: IAM Role for User Group ---"
+          echo "Granting IAM role '$API_KEY_VIEWER_ROLE' to group '$USER_GROUP_EMAIL' in project '$PROJECT_ID'..."
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="group:$USER_GROUP_EMAIL" \
+            --role="$API_KEY_VIEWER_ROLE" \
+            --condition=None
+          echo "IAM role '$API_KEY_VIEWER_ROLE' successfully granted to '$USER_GROUP_EMAIL'."
+          echo "----------------------------------------"
+
+      - name: Apply: Create restricted API key
+        id: create_key_apply_run
+        run: |
+          API_KEY_NAME="vertex-ai-restricted-key-${{ github.run_id }}"
+          PROJECT_ID="${{ needs.setup-gcp.outputs.project_id }}"
+          CIDR_RANGE="${{ vars.CIDR_RANGE }}"
+          API_TARGETS="${{ env.API_TARGETS }}"
+
+          echo "--- APPLY RUN: API Key Creation ---"
+          echo "Creating API key '$API_KEY_NAME' in project '$PROJECT_ID' with specified restrictions..."
+          gcloud services api-keys create \
+            --project="$PROJECT_ID" \
+            --display-name="$API_KEY_NAME" \
+            --allowed-ips="$CIDR_RANGE" \
+            --api-target-restriction="$API_TARGETS" \
+            --format="json"
+
+          echo "API key '$API_KEY_NAME' created successfully. It will NOT be displayed in logs for security."
+          echo "---------------------------------"
+
+      - name: Provide key retrieval instructions
+        run: |
+          echo "## API Key Retrieval Instructions" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "A new Vertex AI API Key has been created with the following details:" >> $GITHUB_STEP_SUMMARY
+          echo "- **GCP Project ID**: `${{ needs.setup-gcp.outputs.project_id }}`" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Key Display Name**: `vertex-ai-restricted-key-${{ github.run_id }}`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Users with the `API Keys Viewer` role (`roles/serviceusage.apiKeysViewer`) in the GCP Project can retrieve the key string using the `gcloud` CLI:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# 1. Authenticate to gcloud (if not already authenticated)" >> $GITHUB_STEP_SUMMARY
+          echo "gcloud auth login" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 2. Set your GCP project (if not already configured)" >> $GITHUB_STEP_SUMMARY
+          echo "gcloud config set project ${{ needs.setup-gcp.outputs.project_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 3. Find the API Key's resource name using its display name" >> $GITHUB_STEP_SUMMARY
+          echo "API_KEY_RESOURCE_NAME=\$(gcloud services api-keys list \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --filter=\"displayName=vertex-ai-restricted-key-${{ github.run_id }}\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --format=\"value(name)\")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# 4. Retrieve the actual key string" >> $GITHUB_STEP_SUMMARY
+          echo "API_KEY_VALUE=\$(gcloud services api-keys get-key-string \"\$API_KEY_RESOURCE_NAME\" \\" >> $GITHUB_STEP_SUMMARY
+          echo "  --format=\"value(keyString)\")" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "echo \"Your Vertex AI API Key is: \$API_KEY_VALUE\"" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
