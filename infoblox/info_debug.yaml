@@ -3,65 +3,71 @@
         run: |
           set -x  # Enable command tracing
 
-          # --- BEGIN DEBUGGING ---
-          echo "DEBUG: Value of secrets.INFOBLOX_SECRET_USERNAME from GitHub: '${{ secrets.INFOBLOX_SECRET_USERNAME }}'"
-          echo "DEBUG: Value of secrets.INFOBLOX_SECRET_PASSWORD from GitHub: '${{ secrets.INFOBLOX_SECRET_PASSWORD }}'"
-          echo "DEBUG: Value of GCLOUD_PROJECT from environment: '${GCLOUD_PROJECT}'"
-          # --- END DEBUGGING ---
+          # Debugging GitHub contexts (these are expanded by Actions before script runs)
+          echo "DEBUG FROM YAML: GitHub secret 'INFOBLOX_SECRET_USERNAME' is '${{ secrets.INFOBLOX_SECRET_USERNAME }}'"
+          echo "DEBUG FROM YAML: GitHub secret 'INFOBLOX_SECRET_PASSWORD' is '${{ secrets.INFOBLOX_SECRET_PASSWORD }}'"
+          echo "DEBUG FROM YAML: GitHub var for GCLOUD_PROJECT (e.g., vars.AUTOMATION_PROJECT_ID) is '${{ vars.AUTOMATION_PROJECT_ID }}'" # Adjust var name as needed
 
+          # Assign to shell variables
+          # Ensure INFOBLOX_SECRET_USERNAME and INFOBLOX_SECRET_PASSWORD are the EXACT names of your GitHub secrets
           SECRET_USERNAME_NAME="${{ secrets.INFOBLOX_SECRET_USERNAME }}"
           SECRET_PASSWORD_NAME="${{ secrets.INFOBLOX_SECRET_PASSWORD }}"
+          # GCLOUD_PROJECT is already an environment variable from the 'env:' block
 
-          # --- BEGIN DEBUGGING ---
-          echo "DEBUG: Value of shell variable SECRET_USERNAME_NAME: '${SECRET_USERNAME_NAME}'"
-          echo "DEBUG: Value of shell variable SECRET_PASSWORD_NAME: '${SECRET_PASSWORD_NAME}'"
-          # --- END DEBUGGING ---
+          # Debugging shell variables
+          echo "DEBUG SHELL VAR: SECRET_USERNAME_NAME is '${SECRET_USERNAME_NAME}'"
+          echo "DEBUG SHELL VAR: SECRET_PASSWORD_NAME is '${SECRET_PASSWORD_NAME}'"
+          echo "DEBUG SHELL VAR: GCLOUD_PROJECT is '${GCLOUD_PROJECT}'" # This prints the environment variable
 
+          # Validations
           if [ -z "${SECRET_USERNAME_NAME}" ]; then
-            echo "ERROR: SECRET_USERNAME_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_USERNAME'."
+            echo "ERROR: Shell variable SECRET_USERNAME_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_USERNAME' and its name."
+            exit 1
+          fi
+          if [ -z "${SECRET_PASSWORD_NAME}" ]; then
+            echo "ERROR: Shell variable SECRET_PASSWORD_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_PASSWORD' and its name."
             exit 1
           fi
           if [ -z "${GCLOUD_PROJECT}" ]; then
-            echo "ERROR: GCLOUD_PROJECT is empty. Check environment variable setup."
+            echo "ERROR: Shell variable GCLOUD_PROJECT is empty. Check 'env:' block and the GitHub var/secret it references (e.g., vars.AUTOMATION_PROJECT_ID)."
             exit 1
           fi
 
           echo "Attempting to fetch INFOBLOX_USERNAME..."
           INFOBLOX_USERNAME=$(gcloud secrets versions access latest --secret="${SECRET_USERNAME_NAME}" --project="${GCLOUD_PROJECT}")
           
-          # Check if the gcloud command failed and INFOBLOX_USERNAME captured an error
-          # This is a basic check; gcloud might return 0 even on some types of failures to access a secret.
           if [ $? -ne 0 ] || [[ "${INFOBLOX_USERNAME}" == *"ERROR:"* ]] || [[ "${INFOBLOX_USERNAME}" == *"command not found"* ]]; then
-            echo "ERROR: Failed to fetch INFOBLOX_USERNAME. gcloud command output was:"
+            echo "ERROR: Failed to fetch INFOBLOX_USERNAME. gcloud command exit status: $?. Output:"
             echo "${INFOBLOX_USERNAME}"
-            # Optionally, you might want to exit here if a clean secret value is critical
             # exit 1 
           fi
-          echo "INFOBLOX_USERNAME fetched (first 50 chars): $(echo "${INFOBLOX_USERNAME}" | cut -c 1-50)"
-
-
-          if [ -z "${SECRET_PASSWORD_NAME}" ]; then
-            echo "ERROR: SECRET_PASSWORD_NAME is empty. Check GitHub secret 'INFOBLOX_SECRET_PASSWORD'."
-            exit 1
-          fi
+          echo "INFOBLOX_USERNAME fetched (status indicated above, length: $(echo "${INFOBLOX_USERNAME}" | wc -c))"
 
           echo "Attempting to fetch INFOBLOX_PASSWORD..."
           INFOBLOX_PASSWORD=$(gcloud secrets versions access latest --secret="${SECRET_PASSWORD_NAME}" --project="${GCLOUD_PROJECT}")
 
           if [ $? -ne 0 ] || [[ "${INFOBLOX_PASSWORD}" == *"ERROR:"* ]] || [[ "${INFOBLOX_PASSWORD}" == *"command not found"* ]]; then
-            echo "ERROR: Failed to fetch INFOBLOX_PASSWORD. gcloud command output was:"
+            echo "ERROR: Failed to fetch INFOBLOX_PASSWORD. gcloud command exit status: $?. Output:"
             echo "${INFOBLOX_PASSWORD}"
             # exit 1
           fi
-          echo "INFOBLOX_PASSWORD fetched (first 50 chars): $(echo "${INFOBLOX_PASSWORD}" | cut -c 1-50)"
+          echo "INFOBLOX_PASSWORD fetched (status indicated above, length: $(echo "${INFOBLOX_PASSWORD}" | wc -c))"
 
           set +x # Disable command tracing
+
+          if [ -z "$INFOBLOX_USERNAME" ]; then
+            echo "CRITICAL ERROR: INFOBLOX_USERNAME is empty after attempted fetch."
+            # exit 1
+          fi
+          if [ -z "$INFOBLOX_PASSWORD" ]; then
+            echo "CRITICAL ERROR: INFOBLOX_PASSWORD is empty after attempted fetch."
+            # exit 1
+          fi
 
           echo "INFOBLOX_USERNAME=${INFOBLOX_USERNAME}" >> $GITHUB_ENV
           echo "INFOBLOX_PASSWORD=${INFOBLOX_PASSWORD}" >> $GITHUB_ENV
         env:
-          # Ensure GCLOUD_PROJECT is correctly set.
-          # Example: GCLOUD_PROJECT: ${{ secrets.YOUR_GCP_PROJECT_ID_SECRET }}
-          # OR for a GitHub variable: GCLOUD_PROJECT: ${{ vars.YOUR_GCP_PROJECT_ID_VARIABLE }}
-          # For now, I'll keep your original placeholder style, assuming you replace it.
-          GCLOUD_PROJECT: YOUR_GCP_PROJECT_ID # Make sure this is your actual GCP Project ID or a correct reference
+          # Replace 'AUTOMATION_PROJECT_ID' with the ACTUAL NAME of your GitHub Actions variable
+          GCLOUD_PROJECT: ${{ vars.AUTOMATION_PROJECT_ID }}
+          # If your project ID is in a secret, use:
+          # GCLOUD_PROJECT: ${{ secrets.AUTOMATION_PROJECT_ID_SECRET }}
