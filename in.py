@@ -28,8 +28,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     get_ref_url = f"{base_wapi_url}/network"
     logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' in view '{network_view}'")
     
-    # CORRECTED: Removed the '_return_fields' parameter. 
-    # We will get the default object which includes the _ref.
     get_ref_params = {
         "network_view": network_view,
         "network": supernet_ip
@@ -46,8 +44,9 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
             supernet_ref = data[0]['_ref']
             logger.info(f"DEBUG SCRIPT: Found supernet _ref: {supernet_ref}")
         else:
-            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'. The supernet may not exist in the specified view, or the response was unexpected.")
+            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'.")
             logger.error(f"Infoblox Response: {json.dumps(data)}")
+            logger.error("VERIFICATION: Please ensure the supernet exists in the specified view AND that the API user has permissions to see it.")
             return None
     except requests.exceptions.RequestException as e:
         logger.error(f"ERROR: Infoblox API request failed during Step 1 (getting _ref): {e}")
@@ -72,7 +71,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     
     logger.info(f"DEBUG SCRIPT: Step 2 - Calling 'next_available_network' function on _ref '{supernet_ref}'")
     logger.info(f"DEBUG SCRIPT:   URL for POST: {post_func_url}")
-    logger.info(f"DEBUG SCRIPT:   Query Params for POST: {json.dumps(post_func_params)}")
     logger.info(f"DEBUG SCRIPT:   Payload for POST: {json.dumps(post_func_payload)}")
 
     response = None
@@ -184,11 +182,23 @@ def main():
 
     if not validate_inputs(args.network_view, args.supernet_ip, args.subnet_name, args.cidr_block_size):
         exit(1)
-
+        
     session = get_infoblox_session(args.infoblox_url, infoblox_username, infoblox_password)
     if not session:
         logger.error("Failed to establish Infoblox session.")
         exit(1)
+
+    # --- Optional: Add a pre-check for the network view itself ---
+    logger.info(f"Pre-check: Verifying access to network view '{args.network_view}'...")
+    try:
+        view_check_res = session.get(f"{args.infoblox_url.rstrip('/')}/networkview?name={args.network_view}", timeout=10)
+        if view_check_res.status_code != 200 or not view_check_res.json():
+            logger.warning(f"WARNING: Could not explicitly verify network view '{args.network_view}' or user lacks permission. This may cause downstream failures.")
+            logger.warning(f"View check response code: {view_check_res.status_code}, content: {view_check_res.text}")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"WARNING: Pre-check for network view failed with exception: {e}")
+    # --- End of pre-check ---
+
 
     if args.action == "dry-run":
         logger.info("\n--- Performing Dry Run ---")
@@ -230,3 +240,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+#     curl -k -u "<YOUR_API_USER>:<YOUR_API_PASSWORD>" \
+# -X GET \
+# "https://blox-lab.example.com/wapi/v2.12/network?network_view=gcp-netnet-d-vie&network=100.45.10.0/12"
