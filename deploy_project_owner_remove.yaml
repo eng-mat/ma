@@ -37,19 +37,24 @@
 
      
       # ====================================================================
-      # FINAL ROBUST VERSION: Writes state to a file to avoid CI log pollution
+      # FINAL DEBUGGING STEP: Let's look inside the generated file
       # ====================================================================
       - name: 'Find Project in State and Remove Owner Role'
         id: secure_project_via_state
         working-directory: ${{ matrix.subdir }}
         run: |
           # Step 1: Generate the JSON state file from Terraform.
-          # The > redirects stdout to the file, isolating it from any
-          # unrelated warnings in the main CI log.
           echo "Generating JSON representation of Terraform state..."
           terraform show -json > tfshow.json
 
-          # Step 2: Run the Python script, telling it to read from the file.
+          # --- VITAL DEBUGGING COMMAND ---
+          # Print the raw content of the file to the log so we can see it.
+          echo "--- 🧐 START content of tfshow.json ---"
+          cat tfshow.json
+          echo "--- END content of tfshow.json ---"
+          # --------------------------------
+
+          # Step 2: Run the Python script.
           echo "Running Python script to process the state file..."
           python3 ../../scripts/remove_owner_role.py \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}" \
