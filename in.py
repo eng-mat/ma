@@ -188,7 +188,9 @@ def main():
     parser.add_argument("--cidr-block-size", type=int, required=True, help="CIDR block size (e.g., 26 for /26)")
     parser.add_argument("--site-code", required=False, default="GCP", help="Site Code (default: GCP)")
     parser.add_argument("--proposed-subnet", help="Proposed subnet from dry-run (for apply action)")
-    parser.add_-argument("--supernet-after-reservation", help="Supernet status after reservation (from dry-run, simulated)")
+    
+    # V V V THIS LINE IS NOW CORRECTED V V V
+    parser.add_argument("--supernet-after-reservation", help="Supernet status after reservation (from dry-run, simulated)")
 
     args = parser.parse_args()
 
@@ -222,7 +224,7 @@ def main():
             )
             logger.info(f"DRY RUN: Supernet Status (simulated): {supernet_after_reservation}")
             print(f"::set-output name=proposed_subnet::{proposed_subnet}")
-            print(f"::set-output name=supernet_after_reservation::{supernet_after_reservation}")
+            print(f"::set-output name=supernet_after-reservation::{supernet_after_reservation}")
             logger.info("\nDry run completed successfully.")
         else:
             logger.error("DRY RUN FAILED: Could not determine a proposed subnet.")
