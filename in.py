@@ -1,83 +1,249 @@
-import requests
-import os
 import argparse
-import urllib3
+import requests
+import json
+import ipaddress
+import os
 import logging
 
-urllib3.disable_warnings()
-
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s]: %(message)s')
+logger = logging.getLogger(__name__)
 
-INFOBLOX_URL = os.getenv('INFOBLOX_URL')
-USERNAME = os.getenv('INFOBLOX_USER')
-PASSWORD = os.getenv('INFOBLOX_PASS')
+def get_infoblox_session(infoblox_url, username, password):
+    """Establishes a session with Infoblox and handles authentication."""
+    session = requests.Session()
+    session.auth = (username, password)
+    session.verify = False # For production, set to True and manage certs
+    return session
 
-def extract_cidr(supernet_input):
-    """Extracts CIDR from input like '10.10.10.2/12 Test-supernet'."""
-    if not supernet_input or len(supernet_input.strip().split()) < 1:
-        raise ValueError("❌ Invalid or missing supernet input. Expected format: 'CIDR Label'")
-    return supernet_input.strip().split()[0]
+def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, cidr_block_size):
+    """
+    Finds the next available CIDR block using a two-step process:
+    1. GET the _ref for the supernet.
+    2. POST to the supernet's _ref to call _function=next_available_network.
+    """
+    base_wapi_url = infoblox_url.rstrip('/')
+    
+    # --- Step 1: Get the _ref for the supernet ---
+    get_ref_url = f"{base_wapi_url}/network"
+    logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' in view '{network_view}'")
+    
+    get_ref_params = {
+        "network_view": network_view,
+        "network": supernet_ip,
+        "_return_fields": "_ref"
+    }
+    logger.info(f"DEBUG SCRIPT: Params for getting _ref: {json.dumps(get_ref_params)}")
+    
+    response = None
+    supernet_ref = None
+    try:
+        response = session.get(get_ref_url, params=get_ref_params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if data and isinstance(data, list) and len(data) > 0 and '_ref' in data[0]:
+            supernet_ref = data[0]['_ref']
+            logger.info(f"DEBUG SCRIPT: Found supernet _ref: {supernet_ref}")
+        else:
+            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'. Response: {json.dumps(data)}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"ERROR: Infoblox API request failed during Step 1 (getting _ref): {e}")
+        if response is not None:
+             logger.error(f"Infoblox Response Content: {response.text}")
+        return None
 
-def reserve_ip(network_view, supernet, cidr, subnet_name, dry_run):
-    logging.info(f"📦 Starting reservation | View: {network_view} | Supernet: {supernet} | CIDR: {cidr} | Name: {subnet_name} | Dry-run: {dry_run}")
+    # --- Step 2: POST to the _ref to call the next_available_network function ---
+    if not supernet_ref:
+        return None
 
-    if dry_run:
-        logging.info("🧪 DRY-RUN mode enabled. No actual reservation made.")
-        return
+    post_func_url = f"{base_wapi_url}/{supernet_ref}"
+    
+    # For a function call, the function name is a query parameter
+    post_func_params = {
+        "_function": "next_available_network"
+    }
+    
+    # The parameters for the function are in the JSON body
+    post_func_payload = {
+        "num": 1,
+        "cidr": cidr_block_size
+    }
+    
+    logger.info(f"DEBUG SCRIPT: Step 2 - Calling 'next_available_network' function on _ref '{supernet_ref}'")
+    logger.info(f"DEBUG SCRIPT:   URL for POST: {post_func_url}")
+    logger.info(f"DEBUG SCRIPT:   Query Params for POST: {json.dumps(post_func_params)}")
+    logger.info(f"DEBUG SCRIPT:   Payload for POST: {json.dumps(post_func_payload)}")
+
+    response = None
+    try:
+        response = session.post(post_func_url, params=post_func_params, json=post_func_payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        # The expected response is an object with a "networks" key containing a list of CIDR strings
+        if data and isinstance(data, dict) and 'networks' in data and len(data['networks']) > 0:
+            proposed_network = data['networks'][0]
+            logger.info(f"SUCCESS: Proposed network CIDR string found: {proposed_network}")
+            return proposed_network
+        else:
+            logger.error(f"ERROR: Could not find 'networks' in response from next_available_network function call.")
+            logger.error(f"Raw Infoblox Response: {json.dumps(data, indent=2)}")
+            return None
+
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"ERROR: Infoblox API request failed during Step 2 (calling function): {http_err}")
+        if http_err.response is not None:
+            logger.error(f"Infoblox Response Content: {http_err.response.text}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"ERROR: Infoblox API request failed (RequestException) during Step 2: {e}")
+        if response is not None:
+            logger.error(f"Infoblox Response Text (if available): {response.text}")
+        return None
+    except json.JSONDecodeError:
+        logger.error(f"ERROR: Failed to parse JSON response from Infoblox during Step 2.")
+        if response is not None:
+             logger.error(f"Infoblox Raw Response: {response.text}")
+        return None
+
+
+def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_name, site_code):
+    """
+    Performs the actual CIDR reservation (network creation) in Infoblox.
+    """
+    wapi_url = f"{infoblox_url.rstrip('/')}/network"
+
+    logger.info(f"DEBUG SCRIPT: Inside reserve_cidr:")
+    logger.info(f"DEBUG SCRIPT:   constructed wapi_url = '{wapi_url}'")
+    logger.info(f"DEBUG SCRIPT:   proposed_subnet = '{proposed_subnet}'")
 
     payload = {
+        "network": proposed_subnet,
         "network_view": network_view,
-        "network": f"func:nextavailablenetwork:{supernet},{cidr}",
         "comment": subnet_name,
-        "extattrs": {"SiteCode": {"value": "GCP"}}
+        "extattrs": {
+            "Site Code": {"value": site_code}
+        }
     }
+    logger.info(f"DEBUG SCRIPT: Payload for CIDR reservation: {json.dumps(payload, indent=2)}")
 
-    response = requests.post(f"{INFOBLOX_URL}/network", json=payload, auth=(USERNAME, PASSWORD), verify=False)
-    logging.info(f"🔁 Infoblox Response Code: {response.status_code}")
+    logger.info(f"Attempting to reserve CIDR: {proposed_subnet} in network view: {network_view}...")
+    response = None
+    try:
+        response = session.post(wapi_url, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        logger.info(f"SUCCESS: Successfully reserved CIDR: {proposed_subnet}. Infoblox Ref: {data}")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"ERROR: Infoblox API request failed (HTTPError) during CIDR reservation: {http_err}")
+        if http_err.response is not None:
+            logger.error(f"Infoblox Response Content: {http_err.response.text}")
+        return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"ERROR: Infoblox API request failed (RequestException) during CIDR reservation: {e}")
+        if response is not None:
+            logger.error(f"Infoblox Response Text (if available): {response.text}")
+        return False
+    except json.JSONDecodeError:
+        logger.error(f"ERROR: Failed to parse JSON response from Infoblox during CIDR reservation.")
+        if response is not None:
+            logger.error(f"Infoblox Raw Response: {response.text}")
+        return False
 
-    if response.status_code != 201:
-        logging.error(f"❌ Reservation failed: {response.text}")
-        raise Exception(f"Reservation failed: {response.text}")
+def get_supernet_info(session, infoblox_url, supernet_ip, network_view):
+    logger.info(f"DEBUG SCRIPT: Simulating supernet info for {supernet_ip} in view {network_view}.")
+    return f"Information for supernet {supernet_ip} in network view {network_view} (simulation)"
 
-    result = response.json()
-    logging.info(f"✅ Reserved CIDR: {result['network']}")
+def validate_inputs(network_view, supernet_ip, subnet_name, cidr_block_size_str):
+    if not all([network_view, supernet_ip, subnet_name, str(cidr_block_size_str)]):
+        logger.error("Validation Error: All inputs (network_view, supernet_ip, subnet_name, cidr_block_size) are required.")
+        return False
+    try:
+        cidr_block_size = int(cidr_block_size_str)
+        if not (1 <= cidr_block_size <= 32):
+            logger.error(f"Validation Error: CIDR block size must be an integer between 1 and 32. Received: {cidr_block_size}")
+            return False
+    except ValueError:
+        logger.error(f"Validation Error: CIDR block size must be a valid integer. Received: {cidr_block_size_str}")
+        return False
+    try:
+        ipaddress.ip_network(supernet_ip, strict=False)
+    except ValueError:
+        logger.error(f"Validation Error: Invalid Supernet IP format: {supernet_ip}")
+        return False
+    if not subnet_name.strip():
+        logger.error("Validation Error: Subnet name cannot be empty or just whitespace.")
+        return False
+    return True
 
-def delete_reservation(network_view, cidr, subnet_name, dry_run):
-    logging.info(f"🗑️ Starting deletion | View: {network_view} | CIDR: {cidr} | Name: {subnet_name} | Dry-run: {dry_run}")
-
-    if dry_run:
-        logging.info("🧪 DRY-RUN mode enabled. No actual deletion made.")
-        return
-
-    query = {"network_view": network_view, "network": cidr, "comment": subnet_name}
-    response = requests.get(f"{INFOBLOX_URL}/network", params=query, auth=(USERNAME, PASSWORD), verify=False)
-
-    if response.status_code != 200 or not response.json():
-        logging.error(f"❌ Reservation not found: {response.text}")
-        raise Exception(f"Reservation not found: {response.text}")
-
-    network_ref = response.json()[0]['_ref']
-    del_response = requests.delete(f"{INFOBLOX_URL}/{network_ref}", auth=(USERNAME, PASSWORD), verify=False)
-
-    if del_response.status_code != 200:
-        logging.error(f"❌ Deletion failed: {del_response.text}")
-        raise Exception(f"Deletion failed: {del_response.text}")
-
-    logging.info(f"✅ Successfully deleted CIDR: {cidr}")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Infoblox IPAM Automation")
-    parser.add_argument("--action", required=True, choices=["reserve", "delete"])
-    parser.add_argument("--network_view", required=True)
-    parser.add_argument("--supernet", required=False)
-    parser.add_argument("--cidr", required=False)
-    parser.add_argument("--subnet_name", required=True)
-    parser.add_argument("--dry_run", action="store_true")
+def main():
+    parser = argparse.ArgumentParser(description="Infoblox CIDR Reservation Workflow Script")
+    parser.add_argument("action", choices=["dry-run", "apply"], help="Action to perform: dry-run or apply")
+    parser.add_argument("--infoblox-url", required=True, help="Infoblox WAPI URL (e.g., https://infoblox.example.com/wapi/vX.X)")
+    parser.add_argument("--network-view", required=True, help="Infoblox Network View/Container")
+    parser.add_argument("--supernet-ip", required=True, help="Supernet IP from which to reserve")
+    parser.add_argument("--subnet-name", required=True, help="Name for the new subnet (used as comment)")
+    parser.add_argument("--cidr-block-size", type=int, required=True, help="CIDR block size (e.g., 26 for /26)")
+    parser.add_argument("--site-code", required=False, default="GCP", help="Site Code (default: GCP)")
+    parser.add_argument("--proposed-subnet", help="Proposed subnet from dry-run (for apply action)")
+    parser.add_-argument("--supernet-after-reservation", help="Supernet status after reservation (from dry-run, simulated)")
 
     args = parser.parse_args()
 
-    if args.action == "reserve":
-        parsed_supernet = extract_cidr(args.supernet)
-        reserve_ip(args.network_view, parsed_supernet, args.cidr, args.subnet_name, args.dry_run)
-    elif args.action == "delete":
-        delete_reservation(args.network_view, args.cidr, args.subnet_name, args.dry_run)
+    infoblox_username = os.environ.get("INFOBLOX_USERNAME")
+    infoblox_password = os.environ.get("INFOBLOX_PASSWORD")
+
+    if not infoblox_username or not infoblox_password:
+        logger.error("Infoblox username or password not found in environment variables.")
+        exit(1)
+
+    if not validate_inputs(args.network_view, args.supernet_ip, args.subnet_name, args.cidr_block_size):
+        exit(1)
+
+    session = get_infoblox_session(args.infoblox_url, infoblox_username, infoblox_password)
+    if not session:
+        logger.error("Failed to establish Infoblox session.")
+        exit(1)
+
+    if args.action == "dry-run":
+        logger.info("\n--- Performing Dry Run ---")
+        logger.info(f"DEBUG SCRIPT: Dry-run inputs - Network View: {args.network_view}, Supernet IP: {args.supernet_ip}, Subnet Name: {args.subnet_name}, CIDR Size: {args.cidr_block_size}")
+        
+        proposed_subnet = find_next_available_cidr(
+            session, args.infoblox_url, args.network_view, args.supernet_ip, args.cidr_block_size
+        )
+
+        if proposed_subnet:
+            logger.info(f"DRY RUN: Proposed Subnet to Reserve: {proposed_subnet}")
+            supernet_after_reservation = get_supernet_info(
+                session, args.infoblox_url, args.supernet_ip, args.network_view
+            )
+            logger.info(f"DRY RUN: Supernet Status (simulated): {supernet_after_reservation}")
+            print(f"::set-output name=proposed_subnet::{proposed_subnet}")
+            print(f"::set-output name=supernet_after_reservation::{supernet_after_reservation}")
+            logger.info("\nDry run completed successfully.")
+        else:
+            logger.error("DRY RUN FAILED: Could not determine a proposed subnet.")
+            exit(1)
+
+    elif args.action == "apply":
+        logger.info("\n--- Performing Apply ---")
+        if not args.proposed_subnet:
+            logger.error("Apply FAILED: Missing --proposed-subnet from dry run.")
+            exit(1)
+        
+        logger.info(f"DEBUG SCRIPT: Apply inputs - Proposed Subnet: {args.proposed_subnet}, Network View: {args.network_view}, Subnet Name: {args.subnet_name}")
+        success = reserve_cidr(
+            session, args.infoblox_url, args.proposed_subnet, args.network_view, args.subnet_name, args.site_code
+        )
+        if success:
+            logger.info(f"APPLY: Successfully reserved CIDR: {args.proposed_subnet}")
+            logger.info("\nApply completed successfully.")
+        else:
+            logger.error(f"APPLY FAILED: Could not reserve CIDR: {args.proposed_subnet}.")
+            exit(1)
+
+if __name__ == "__main__":
+    main()
