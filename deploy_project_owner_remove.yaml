@@ -37,9 +37,25 @@
 
      
       # This YAML step is correct and does not need to be changed.
-      - name: 'Find Project in State and Remove Owner Role'
-        id: secure_project_via_state
+      # This is the final step in your 'execute_apply' job
+      - name: 'Remove SA Owner Role using Terraform Output'
+        id: remove_owner_role
         working-directory: ${{ matrix.subdir }}
         run: |
+          # Step 1: Reliably get the project ID from the new outputs.tf file.
+          # The -raw flag ensures we get a clean string with no quotes.
+          PROJECT_ID=$(terraform output -raw project_id)
+
+          # Basic validation to ensure the output command worked
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Failed to retrieve 'project_id' from Terraform outputs."
+            echo "::error::Please ensure 'outputs.tf' is present and correct."
+            exit 1
+          fi
+          
+          echo "Successfully retrieved Project ID: $PROJECT_ID"
+
+          # Step 2: Run the Python script, passing the retrieved ID as an argument.
           python3 ../../scripts/remove_owner_role.py \
+            --project-id "$PROJECT_ID" \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
