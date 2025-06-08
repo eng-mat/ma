@@ -1,0 +1,129 @@
+# .github/workflows/deploy-gcp-project.yml
+
+name: 'Deploy GCP Project and Secure Service Account'
+
+# Controls when the workflow will run
+on:
+  push:
+    branches:
+      - main # Triggers the workflow on push events to the main branch
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+
+# Environment variables available to all jobs in the workflow
+env:
+  # The Terraform version to use
+  TF_VERSION: 'latest' 
+  # The GCP Project Number where your Workload Identity Federation is configured
+  GCP_PROJECT_NUMBER: '${{ secrets.GCP_PROJECT_NUMBER }}'
+  # The ID of your Workload Identity Pool
+  WIF_POOL_ID: '${{ secrets.WIF_POOL_ID }}'
+  # The ID of your Workload Identity Provider
+  WIF_PROVIDER_ID: '${{ secrets.WIF_PROVIDER_ID }}'
+  # The email of the service account to use for Terraform and role removal
+  GCP_SERVICE_ACCOUNT_EMAIL: '${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}'
+
+jobs:
+  #################################################################
+  # JOB 1: Run Terraform to Create the GCP Project               #
+  #################################################################
+  terraform-plan-and-apply:
+    name: 'Terraform Plan and Apply'
+    runs-on: ubuntu-latest
+
+    # These permissions are needed to interact with GitHub's OIDC Token endpoint.
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    outputs:
+      project_id: ${{ steps.apply.outputs.project_id }}
+
+    steps:
+      # Step 1: Checkout the repository code
+      - name: 'Checkout'
+        uses: actions/checkout@v4
+
+      # Step 2: Authenticate to Google Cloud using Workload Identity Federation
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ env.WIF_POOL_ID }}/providers/${{ env.WIF_PROVIDER_ID }}'
+          service_account: '${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}'
+
+      # Step 3: Setup Terraform CLI
+      - name: 'Setup Terraform'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Step 4: Initialize Terraform
+      - name: 'Terraform Init'
+        id: init
+        run: terraform init
+
+      # Step 5: Generate a Terraform Plan
+      - name: 'Terraform Plan'
+        id: plan
+        run: terraform plan -no-color
+
+      # Step 6: Apply the Terraform plan
+      # The `id` is crucial for referencing the output later
+      - name: 'Terraform Apply'
+        id: apply
+        run: |
+          # Run the apply command with auto-approval
+          terraform apply -auto-approve -no-color
+
+          # Use `terraform output` to get the created project's ID and set it as a job output
+          # The -raw flag is important to avoid quotes in the output string
+          PROJECT_ID_VALUE=$(terraform output -raw project_id)
+          echo "project_id=$PROJECT_ID_VALUE" >> $GITHUB_OUTPUT
+
+  #################################################################
+  # JOB 2: Remove Owner Role from the Service Account            #
+  #################################################################
+  remove-owner-role:
+    name: 'Secure SA by Removing Owner Role'
+    # This job depends on the successful completion of the terraform job
+    needs: [terraform-plan-and-apply]
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      # Step 1: Authenticate to Google Cloud (required again for this job)
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/${{ env.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ env.WIF_POOL_ID }}/providers/${{ env.WIF_PROVIDER_ID }}'
+          service_account: '${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}'
+      
+      # Step 2: Check for the owner role and remove it if it exists
+      - name: 'Check and Remove Owner Role'
+        id: check_and_remove
+        run: |
+          # Retrieve the project_id from the previous job's output
+          PROJECT_ID="${{ needs.terraform-plan-and-apply.outputs.project_id }}"
+          SA_EMAIL="serviceAccount:${{ env.GCP_SERVICE_ACCOUNT_EMAIL }}"
+          
+          echo "Securing Project: $PROJECT_ID"
+          echo "Target Service Account: $SA_EMAIL"
+          echo "--------------------------------------------------------"
+          echo "Checking for 'roles/owner' binding..."
+
+          # Get the current IAM policy and use `jq` to see if the owner binding exists for the SA.
+          OWNER_BINDING_EXISTS=$(gcloud projects get-iam-policy "$PROJECT_ID" --format="json" \
+            | jq -c --arg email "$SA_EMAIL" '.bindings[] | select(.role == "roles/owner" and (.members[] | contains($email)))')
+
+          if [[ -n "$OWNER_BINDING_EXISTS" ]]; then
+            echo "✅ 'owner' role found. Proceeding with removal..."
+            gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+              --member="$SA_EMAIL" \
+              --role='roles/owner' \
+              --condition=None # Use --condition=None if you're not using IAM conditions
+            echo "✅ Role 'owner' successfully removed."
+          else
+            echo "☑️ 'owner' role not found. Skipping removal."
+          fi
