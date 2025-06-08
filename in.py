@@ -19,14 +19,15 @@ def get_infoblox_session(infoblox_url, username, password):
 def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, cidr_block_size):
     """
     Finds the next available CIDR block using a two-step process:
-    1. GET the _ref for the supernet.
+    1. GET the _ref for the supernet (as a networkcontainer).
     2. POST to the supernet's _ref to call _function=next_available_network.
     """
     base_wapi_url = infoblox_url.rstrip('/')
     
-    # --- Step 1: Get the _ref for the supernet ---
-    get_ref_url = f"{base_wapi_url}/network"
-    logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' in view '{network_view}'")
+    # --- Step 1: Get the _ref for the supernet (as a 'networkcontainer') ---
+    # CORRECTED: Changed the object type from 'network' to 'networkcontainer'
+    get_ref_url = f"{base_wapi_url}/networkcontainer"
+    logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' (as a networkcontainer) in view '{network_view}'")
     
     get_ref_params = {
         "network_view": network_view,
@@ -44,9 +45,9 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
             supernet_ref = data[0]['_ref']
             logger.info(f"DEBUG SCRIPT: Found supernet _ref: {supernet_ref}")
         else:
-            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'.")
+            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}' when searching for a 'networkcontainer'.")
             logger.error(f"Infoblox Response: {json.dumps(data)}")
-            logger.error("VERIFICATION: Please ensure the supernet exists in the specified view AND that the API user has permissions to see it.")
+            logger.error("VERIFICATION: Please ensure the supernet exists and is configured as a 'Network Container' in Infoblox.")
             return None
     except requests.exceptions.RequestException as e:
         logger.error(f"ERROR: Infoblox API request failed during Step 1 (getting _ref): {e}")
@@ -70,7 +71,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     }
     
     logger.info(f"DEBUG SCRIPT: Step 2 - Calling 'next_available_network' function on _ref '{supernet_ref}'")
-    logger.info(f"DEBUG SCRIPT:   URL for POST: {post_func_url}")
     logger.info(f"DEBUG SCRIPT:   Payload for POST: {json.dumps(post_func_payload)}")
 
     response = None
@@ -193,8 +193,7 @@ def main():
     try:
         view_check_res = session.get(f"{args.infoblox_url.rstrip('/')}/networkview?name={args.network_view}", timeout=10)
         if view_check_res.status_code != 200 or not view_check_res.json():
-            logger.warning(f"WARNING: Could not explicitly verify network view '{args.network_view}' or user lacks permission. This may cause downstream failures.")
-            logger.warning(f"View check response code: {view_check_res.status_code}, content: {view_check_res.text}")
+            logger.warning(f"WARNING: Could not explicitly verify network view '{args.network_view}' or user lacks permission.")
     except requests.exceptions.RequestException as e:
         logger.warning(f"WARNING: Pre-check for network view failed with exception: {e}")
     # --- End of pre-check ---
@@ -214,6 +213,7 @@ def main():
                 session, args.infoblox_url, args.supernet_ip, args.network_view
             )
             logger.info(f"DRY RUN: Supernet Status (simulated): {supernet_after_reservation}")
+            # This ::set-output command is deprecated, consider updating to use $GITHUB_OUTPUT
             print(f"::set-output name=proposed_subnet::{proposed_subnet}")
             print(f"::set-output name=supernet_after-reservation::{supernet_after_reservation}")
             logger.info("\nDry run completed successfully.")
@@ -240,8 +240,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-#     curl -k -u "<YOUR_API_USER>:<YOUR_API_PASSWORD>" \
-# -X GET \
-# "https://blox-lab.example.com/wapi/v2.12/network?network_view=gcp-netnet-d-vie&network=100.45.10.0/12"
