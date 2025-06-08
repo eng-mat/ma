@@ -1,12 +1,9 @@
-# ... (rest of your workflow file) ...
-
-  execute_apply:
+execute_apply:
     name: 'Execute Terraform Apply'
     runs-on: ubuntu-latest
-    needs: [get-projects] # Assuming 'get-projects' is the name of your job that lists directories
+    needs: [get-projects]
     if: ${{ needs.get-projects.outputs.matrix != '[]' && needs.get-projects.outputs.matrix != '' }}
     
-    # These permissions are needed for Workload Identity Federation
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -20,7 +17,12 @@
       - name: 'Checkout'
         uses: actions/checkout@v4
       
-      # IMPORTANT: Authentication must happen before using gcloud or terraform
+      # NEW: Add this step to set up Python in the job
+      - name: 'Set up Python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - name: 'Authenticate to Google Cloud'
         uses: 'google-github-actions/auth@v2'
         with:
@@ -34,7 +36,7 @@
         working-directory: ${{ matrix.subdir }}
         run: terraform init
 
-      - name: 'Plan Terraform'
+      - name: 'Terraform Plan'
         id: terraform_plan
         working-directory: ${{ matrix.subdir }}
         run: terraform plan -no-color
@@ -45,37 +47,25 @@
         run: terraform apply -input=false --auto-approve
 
       # ====================================================================
-      # NEW STEP: Add this block right after your Terraform Apply step
+      # MODIFIED STEP: This now uses the Python script
       # ====================================================================
-      - name: 'Check and Remove Owner Role'
-        id: check_and_remove
-        working-directory: ${{ matrix.subdir }} # Run in the same directory as apply
+      - name: 'Check and Remove Owner Role (Python)'
+        id: check_and_remove_py
+        working-directory: ${{ matrix.subdir }}
         run: |
-          echo "Running post-apply security step for directory: ${{ matrix.subdir }}"
-          
-          # Directly read the output from the terraform state in the current directory
+          # First, get the project ID from the terraform output in this directory
           PROJECT_ID=$(terraform output -raw project_id)
-          SA_EMAIL="serviceAccount:${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
-          
+
+          # Basic validation to ensure the output worked
           if [ -z "$PROJECT_ID" ]; then
-            echo "::error::Could not determine project_id from terraform output. Make sure the output exists."
+            echo "::error::Could not determine project_id from terraform output. Make sure the output exists in your TF configuration."
             exit 1
           fi
           
-          echo "Securing Project: $PROJECT_ID"
-          echo "Checking for 'roles/owner' on Service Account: $SA_EMAIL"
-          
-          # Get the IAM policy and use jq to check if the owner binding exists
-          OWNER_BINDING_EXISTS=$(gcloud projects get-iam-policy "$PROJECT_ID" --format="json" \
-            | jq -c --arg email "$SA_EMAIL" '.bindings[] | select(.role == "roles/owner" and (.members[] | contains($email)))')
-            
-          if [[ -n "$OWNER_BINDING_EXISTS" ]]; then
-            echo "✅ 'owner' role found. Proceeding with removal..."
-            gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
-              --member="$SA_EMAIL" \
-              --role='roles/owner' \
-              --condition=None
-            echo "✅ Role 'owner' successfully removed."
-          else
-            echo "☑️ 'owner' role not found. Skipping removal."
-          fi
+          # Execute the python script.
+          # Note: The path to the script is relative to the current working-directory.
+          # If your subdirs are one level deep, `../../scripts` is correct.
+          # Adjust this path if your directory structure is different.
+          python3 ../../scripts/remove_owner_role.py \
+            --project-id "$PROJECT_ID" \
+            --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
