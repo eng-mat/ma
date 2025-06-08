@@ -31,7 +31,7 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     get_ref_params = {
         "network_view": network_view,
         "network": supernet_ip,
-        "_return_fields": "_ref"
+        "_return_fields+": "_ref" # CORRECTED: Added '+' to _return_fields
     }
     logger.info(f"DEBUG SCRIPT: Params for getting _ref: {json.dumps(get_ref_params)}")
     
@@ -59,12 +59,10 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
 
     post_func_url = f"{base_wapi_url}/{supernet_ref}"
     
-    # For a function call, the function name is a query parameter
     post_func_params = {
         "_function": "next_available_network"
     }
     
-    # The parameters for the function are in the JSON body
     post_func_payload = {
         "num": 1,
         "cidr": cidr_block_size
@@ -81,7 +79,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
         response.raise_for_status()
         data = response.json()
         
-        # The expected response is an object with a "networks" key containing a list of CIDR strings
         if data and isinstance(data, dict) and 'networks' in data and len(data['networks']) > 0:
             proposed_network = data['networks'][0]
             logger.info(f"SUCCESS: Proposed network CIDR string found: {proposed_network}")
@@ -188,8 +185,6 @@ def main():
     parser.add_argument("--cidr-block-size", type=int, required=True, help="CIDR block size (e.g., 26 for /26)")
     parser.add_argument("--site-code", required=False, default="GCP", help="Site Code (default: GCP)")
     parser.add_argument("--proposed-subnet", help="Proposed subnet from dry-run (for apply action)")
-    
-    # V V V THIS LINE IS NOW CORRECTED V V V
     parser.add_argument("--supernet-after-reservation", help="Supernet status after reservation (from dry-run, simulated)")
 
     args = parser.parse_args()
