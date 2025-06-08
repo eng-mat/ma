@@ -27,20 +27,24 @@ def run_command(command_args, expect_json=True):
 
         if expect_json:
             try:
-                # --- FINAL ROBUST LOGIC ---
-                # Find the first '{' which indicates the start of the actual JSON object.
-                # This will strip any preceding garbage lines (like the command echo) from the output.
+                # --- FINAL, MOST PRECISE LOGIC ---
+                # Find the start of the JSON object.
                 json_start_index = stdout.find('{')
-
                 if json_start_index == -1:
-                    # If no '{' is found at all, the output is not recoverable.
-                    raise json.JSONDecodeError("No JSON object start character '{' found in the command output.", stdout, 0)
+                    raise json.JSONDecodeError("No JSON object start character '{' found.", stdout, 0)
 
-                # Slice the string from the first '{' to the very end.
-                json_string = stdout[json_start_index:]
+                # Find the end of the JSON object by finding the LAST '}'.
+                # This handles garbage text appearing *after* the JSON.
+                json_end_index = stdout.rfind('}')
+                if json_end_index == -1:
+                    raise json.JSONDecodeError("No JSON object end character '}' found.", stdout, 0)
+
+                # Slice the string precisely from the first '{' to the last '}' (inclusive).
+                json_string = stdout[json_start_index : json_end_index + 1]
                 
-                # Parse the cleaned, JSON-only string.
+                # Parse the perfectly sliced, clean string.
                 return json.loads(json_string)
+
             except json.JSONDecodeError as e:
                 print("--- PYTHON SCRIPT: FAILED TO PARSE JSON ---", file=sys.stderr)
                 print(f"   JSONDecodeError: {e}", file=sys.stderr)
