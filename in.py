@@ -1,3 +1,8 @@
+# curl -k -u "<YOUR_INFOBLOX_USER>:<YOUR_INFOBLOX_PASSWORD>" \
+# -X GET \
+# "<YOUR_INFOBLOX_URL>/network?network_view=<YOUR_NETWORK_VIEW>&network=<YOUR_SUPERNET_IP>"
+
+
 import argparse
 import requests
 import json
