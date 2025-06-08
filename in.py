@@ -1,8 +1,3 @@
-# curl -k -u "<YOUR_INFOBLOX_USER>:<YOUR_INFOBLOX_PASSWORD>" \
-# -X GET \
-# "<YOUR_INFOBLOX_URL>/network?network_view=<YOUR_NETWORK_VIEW>&network=<YOUR_SUPERNET_IP>"
-
-
 import argparse
 import requests
 import json
@@ -33,12 +28,13 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     get_ref_url = f"{base_wapi_url}/network"
     logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' in view '{network_view}'")
     
+    # CORRECTED: Removed the '_return_fields' parameter. 
+    # We will get the default object which includes the _ref.
     get_ref_params = {
         "network_view": network_view,
-        "network": supernet_ip,
-        "_return_fields+": "_ref" # CORRECTED: Added '+' to _return_fields
+        "network": supernet_ip
     }
-    logger.info(f"DEBUG SCRIPT: Params for getting _ref: {json.dumps(get_ref_params)}")
+    logger.info(f"DEBUG SCRIPT: Params for getting ref: {json.dumps(get_ref_params)}")
     
     response = None
     supernet_ref = None
@@ -50,7 +46,8 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
             supernet_ref = data[0]['_ref']
             logger.info(f"DEBUG SCRIPT: Found supernet _ref: {supernet_ref}")
         else:
-            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'. Response: {json.dumps(data)}")
+            logger.error(f"ERROR: Could not find _ref for supernet '{supernet_ip}'. The supernet may not exist in the specified view, or the response was unexpected.")
+            logger.error(f"Infoblox Response: {json.dumps(data)}")
             return None
     except requests.exceptions.RequestException as e:
         logger.error(f"ERROR: Infoblox API request failed during Step 1 (getting _ref): {e}")
@@ -116,10 +113,6 @@ def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_na
     """
     wapi_url = f"{infoblox_url.rstrip('/')}/network"
 
-    logger.info(f"DEBUG SCRIPT: Inside reserve_cidr:")
-    logger.info(f"DEBUG SCRIPT:   constructed wapi_url = '{wapi_url}'")
-    logger.info(f"DEBUG SCRIPT:   proposed_subnet = '{proposed_subnet}'")
-
     payload = {
         "network": proposed_subnet,
         "network_view": network_view,
@@ -128,8 +121,6 @@ def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_na
             "Site Code": {"value": site_code}
         }
     }
-    logger.info(f"DEBUG SCRIPT: Payload for CIDR reservation: {json.dumps(payload, indent=2)}")
-
     logger.info(f"Attempting to reserve CIDR: {proposed_subnet} in network view: {network_view}...")
     response = None
     try:
@@ -138,20 +129,10 @@ def reserve_cidr(session, infoblox_url, proposed_subnet, network_view, subnet_na
         data = response.json()
         logger.info(f"SUCCESS: Successfully reserved CIDR: {proposed_subnet}. Infoblox Ref: {data}")
         return True
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"ERROR: Infoblox API request failed (HTTPError) during CIDR reservation: {http_err}")
-        if http_err.response is not None:
-            logger.error(f"Infoblox Response Content: {http_err.response.text}")
-        return False
     except requests.exceptions.RequestException as e:
-        logger.error(f"ERROR: Infoblox API request failed (RequestException) during CIDR reservation: {e}")
+        logger.error(f"ERROR: Infoblox API request failed during CIDR reservation: {e}")
         if response is not None:
-            logger.error(f"Infoblox Response Text (if available): {response.text}")
-        return False
-    except json.JSONDecodeError:
-        logger.error(f"ERROR: Failed to parse JSON response from Infoblox during CIDR reservation.")
-        if response is not None:
-            logger.error(f"Infoblox Raw Response: {response.text}")
+             logger.error(f"Infoblox Response Content: {response.text}")
         return False
 
 def get_supernet_info(session, infoblox_url, supernet_ip, network_view):
