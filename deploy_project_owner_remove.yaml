@@ -35,10 +35,20 @@
         working-directory: ${{ matrix.subdir }}
         run: terraform apply -input=false --auto-approve
 
-      # This step will work correctly with your GCS backend because 'init' has already run.
+     
+      # ====================================================================
+      # DEBUGGING STEP: This version will show us the raw output from Terraform
+      # ====================================================================
       - name: 'Find Project in State and Remove Owner Role'
         id: secure_project_via_state
         working-directory: ${{ matrix.subdir }}
         run: |
+          echo "--- 🧐 Debugging Terraform State ---"
+          # This command will show us exactly what Terraform is outputting.
+          # The `|| true` prevents the workflow from stopping here if it fails.
+          terraform show -json || true
+          echo "--- End of Debugging Output ---"
+
+          # Now, run the Python script as before.
           python3 ../../scripts/remove_owner_role.py \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
