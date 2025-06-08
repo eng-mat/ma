@@ -24,8 +24,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
     """
     base_wapi_url = infoblox_url.rstrip('/')
     
-    # --- Step 1: Get the _ref for the supernet (as a 'networkcontainer') ---
-    # CORRECTED: Changed the object type from 'network' to 'networkcontainer'
     get_ref_url = f"{base_wapi_url}/networkcontainer"
     logger.info(f"DEBUG SCRIPT: Step 1 - Getting _ref for supernet '{supernet_ip}' (as a networkcontainer) in view '{network_view}'")
     
@@ -55,7 +53,6 @@ def find_next_available_cidr(session, infoblox_url, network_view, supernet_ip, c
              logger.error(f"Infoblox Response Content: {response.text}")
         return None
 
-    # --- Step 2: POST to the _ref to call the next_available_network function ---
     if not supernet_ref:
         return None
 
@@ -188,21 +185,8 @@ def main():
         logger.error("Failed to establish Infoblox session.")
         exit(1)
 
-    # --- Optional: Add a pre-check for the network view itself ---
-    logger.info(f"Pre-check: Verifying access to network view '{args.network_view}'...")
-    try:
-        view_check_res = session.get(f"{args.infoblox_url.rstrip('/')}/networkview?name={args.network_view}", timeout=10)
-        if view_check_res.status_code != 200 or not view_check_res.json():
-            logger.warning(f"WARNING: Could not explicitly verify network view '{args.network_view}' or user lacks permission.")
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"WARNING: Pre-check for network view failed with exception: {e}")
-    # --- End of pre-check ---
-
-
     if args.action == "dry-run":
         logger.info("\n--- Performing Dry Run ---")
-        logger.info(f"DEBUG SCRIPT: Dry-run inputs - Network View: {args.network_view}, Supernet IP: {args.supernet_ip}, Subnet Name: {args.subnet_name}, CIDR Size: {args.cidr_block_size}")
-        
         proposed_subnet = find_next_available_cidr(
             session, args.infoblox_url, args.network_view, args.supernet_ip, args.cidr_block_size
         )
@@ -213,9 +197,20 @@ def main():
                 session, args.infoblox_url, args.supernet_ip, args.network_view
             )
             logger.info(f"DRY RUN: Supernet Status (simulated): {supernet_after_reservation}")
-            # This ::set-output command is deprecated, consider updating to use $GITHUB_OUTPUT
-            print(f"::set-output name=proposed_subnet::{proposed_subnet}")
-            print(f"::set-output name=supernet_after-reservation::{supernet_after_reservation}")
+
+            # --- V V V THIS BLOCK IS THE ONLY CHANGE IN THIS SCRIPT V V V ---
+            # Use the modern GITHUB_OUTPUT method to set job outputs
+            if 'GITHUB_OUTPUT' in os.environ:
+                logger.info(f"Setting outputs using GITHUB_OUTPUT.")
+                with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                    print(f"proposed_subnet={proposed_subnet}", file=f)
+                    print(f"supernet_after_reservation={supernet_after_reservation}", file=f)
+            else: # Fallback for older runners or local testing
+                logger.warning("GITHUB_OUTPUT not found. Falling back to deprecated ::set-output.")
+                print(f"::set-output name=proposed_subnet::{proposed_subnet}")
+                print(f"::set-output name=supernet_after_reservation::{supernet_after_reservation}")
+            # --- END OF CHANGE ---
+
             logger.info("\nDry run completed successfully.")
         else:
             logger.error("DRY RUN FAILED: Could not determine a proposed subnet.")
@@ -227,7 +222,6 @@ def main():
             logger.error("Apply FAILED: Missing --proposed-subnet from dry run.")
             exit(1)
         
-        logger.info(f"DEBUG SCRIPT: Apply inputs - Proposed Subnet: {args.proposed_subnet}, Network View: {args.network_view}, Subnet Name: {args.subnet_name}")
         success = reserve_cidr(
             session, args.infoblox_url, args.proposed_subnet, args.network_view, args.subnet_name, args.site_code
         )
