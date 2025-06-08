@@ -36,14 +36,10 @@
         run: terraform apply -input=false --auto-approve
 
      
-      # ====================================================================
-      # FINAL WORKFLOW STEP: Cleanly execute the self-contained Python script
-      # ====================================================================
+      # This YAML step is correct and does not need to be changed.
       - name: 'Find Project in State and Remove Owner Role'
         id: secure_project_via_state
         working-directory: ${{ matrix.subdir }}
         run: |
-          # The Python script now handles all logic internally, including
-          # running 'terraform show' and parsing the output safely.
           python3 ../../scripts/remove_owner_role.py \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"

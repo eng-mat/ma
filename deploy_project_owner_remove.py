@@ -6,7 +6,7 @@ import os
 
 def run_command(command_args, expect_json=True):
     """
-    Runs a command, captures its output directly, and handles errors robustly.
+    Runs a command and handles its output with maximum robustness.
     """
     try:
         process = subprocess.run(
@@ -27,15 +27,27 @@ def run_command(command_args, expect_json=True):
 
         if expect_json:
             try:
-                return json.loads(stdout)
+                # --- FINAL ROBUST LOGIC ---
+                # Find the first '{' which indicates the start of the actual JSON object.
+                # This will strip any preceding garbage lines (like the command echo) from the output.
+                json_start_index = stdout.find('{')
+
+                if json_start_index == -1:
+                    # If no '{' is found at all, the output is not recoverable.
+                    raise json.JSONDecodeError("No JSON object start character '{' found in the command output.", stdout, 0)
+
+                # Slice the string from the first '{' to the very end.
+                json_string = stdout[json_start_index:]
+                
+                # Parse the cleaned, JSON-only string.
+                return json.loads(json_string)
             except json.JSONDecodeError as e:
-                # This is the ultimate debug step. If JSON is invalid, print the exact text that was received.
                 print("--- PYTHON SCRIPT: FAILED TO PARSE JSON ---", file=sys.stderr)
                 print(f"   JSONDecodeError: {e}", file=sys.stderr)
                 print("--- The raw text output that failed to parse was: ---", file=sys.stderr)
                 print(stdout, file=sys.stderr)
                 print("--- End of raw text output ---", file=sys.stderr)
-                sys.exit(1) # Fail loudly
+                sys.exit(1)
 
         return stdout.strip()
     except Exception as e:
@@ -62,9 +74,7 @@ def main():
     parser.add_argument("--service-account-email", required=True, help="Email of the GCP Service Account.")
     args = parser.parse_args()
 
-    # The script now finds the project_id by itself.
     project_id = find_project_id_from_state()
-
     member_to_remove = f"serviceAccount:{args.service_account_email}"
     role_to_remove = "roles/owner"
 
@@ -98,7 +108,6 @@ def main():
         with open(temp_policy_file, "w") as f:
             json.dump(policy, f)
         try:
-            # For set-iam-policy, we don't expect a JSON response.
             run_command(["gcloud", "projects", "set-iam-policy", project_id, temp_policy_file], expect_json=False)
             print("   Success: IAM policy updated successfully.")
         finally:
