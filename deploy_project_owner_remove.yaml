@@ -54,29 +54,15 @@
 
 
 
-  # ====================================================================
-      # THE DEFINITIVE, FINAL STEP
+ # ====================================================================
+      # FINAL WORKFLOW STEP
       # ====================================================================
-      - name: 'Remove SA Owner Role from Terraform Log'
-        id: remove_owner_role
+      - name: 'Secure Project by Removing SA Owner Role'
+        id: secure_project
         working-directory: ${{ matrix.subdir }}
         run: |
-          # Step 1: This extraction is now more specific and robust.
-          # It finds the line with `project_id` and then uses `sed` to
-          # isolate ONLY the value within the quotes.
-          PROJECT_ID=$(grep -A 2 'project_id' apply.log | tail -1 | sed 's/[^"]*"\([^"]*\)".*/\1/')
-
-          # Validation to ensure the ID was found and is clean
-          if [ -z "$PROJECT_ID" ]; then
-            echo "::error::Could not find 'project_id' in the apply.log file."
-            echo "--- Full apply.log for debugging ---"
-            cat apply.log
-            exit 1
-          fi
-
-          echo "Final clean Project ID to be used: '$PROJECT_ID'"
-
-          # Step 2: Run the simple Python script with the clean Project ID
+          # The Python script handles all logic internally, making this step
+          # clean and resilient to the shell environment's noise.
           python3 ../../scripts/remove_owner_role.py \
-            --project-id "$PROJECT_ID" \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
+    

@@ -6,52 +6,83 @@ import subprocess
 import sys
 import os
 
-def run_gcloud_command(command_args, expect_json=True):
-    """Runs a gcloud command and returns the output."""
+def run_command(command_args, expect_json=True):
+    """
+    Runs a command and handles its output with maximum robustness.
+    It intelligently finds and parses JSON even if the output stream has extra text.
+    """
     try:
-        if expect_json:
-            command_args.append("--format=json")
-        
         process = subprocess.run(
-            ["gcloud"] + command_args,
-            capture_output=True, text=True, check=False
+            command_args,
+            capture_output=True, text=True, check=False,
         )
 
+        stdout = process.stdout
+        stderr = process.stderr
+
         if process.returncode != 0:
-            print(f"Error: gcloud command failed: {' '.join(['gcloud'] + command_args)}", file=sys.stderr)
-            print(f"Stderr:\n{process.stderr}", file=sys.stderr)
+            print(f"Error: Command failed: {' '.join(command_args)}", file=sys.stderr)
+            print(f"--- Stderr ---\n{stderr}", file=sys.stderr)
             sys.exit(process.returncode)
 
-        # Handle empty stdout for commands that don't return anything on success
-        if expect_json and not process.stdout.strip():
-             return {}
-        
-        return json.loads(process.stdout) if expect_json else process.stdout.strip()
+        if expect_json:
+            try:
+                # Find the start of the JSON object to strip any preceding garbage lines.
+                json_start_index = stdout.find('{')
+                if json_start_index == -1:
+                    raise json.JSONDecodeError("No JSON object start character '{' found in output.", stdout, 0)
+
+                # Find the end of the JSON object by finding the LAST '}' to strip trailing garbage.
+                json_end_index = stdout.rfind('}')
+                if json_end_index == -1:
+                    raise json.JSONDecodeError("No JSON object end character '}' found in output.", stdout, 0)
+
+                # Slice the string precisely from the first '{' to the last '}' (inclusive).
+                json_string = stdout[json_start_index : json_end_index + 1]
+                
+                return json.loads(json_string)
+            except json.JSONDecodeError as e:
+                print("--- PYTHON SCRIPT: FAILED TO PARSE JSON ---", file=sys.stderr)
+                print(f"   JSONDecodeError: {e}", file=sys.stderr)
+                print("--- The raw text output that the script tried to parse was: ---\n{stdout}", file=sys.stderr)
+                sys.exit(1)
+
+        return stdout.strip()
     except Exception as e:
         print(f"An unexpected Python error occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
+def find_project_id_from_state():
+    """Finds the GCP Project ID by running 'terraform show -json' and parsing the output."""
+    print("[1/4] Running 'terraform show -json' to find the project ID...")
+    state_data = run_command(["terraform", "show", "-json"])
+    
+    for resource in state_data.get("values", {}).get("root_module", {}).get("resources", []):
+        if resource.get("type") == "google_project":
+            project_id = resource.get("values", {}).get("project_id")
+            if project_id:
+                print(f"   Success: Found Project ID '{project_id}' in the state file.")
+                return project_id
+    print("Error: Could not find a 'google_project' resource in the Terraform state.", file=sys.stderr)
+    sys.exit(1)
+
 def main():
-    parser = argparse.ArgumentParser(description="Safely removes the 'owner' role from a service account on a GCP project.")
-    parser.add_argument("--project-id", required=True, help="The GCP Project ID.")
-    parser.add_argument("--service-account-email", required=True, help="Email of the GCP Service Account to remove as owner.")
+    parser = argparse.ArgumentParser(description="Finds project ID from Terraform state and safely removes the 'owner' role from a service account.")
+    parser.add_argument("--service-account-email", required=True, help="Email of the GCP Service Account.")
     args = parser.parse_args()
 
-    project_id = args.project_id
+    project_id = find_project_id_from_state()
     member_to_remove = f"serviceAccount:{args.service_account_email}"
     role_to_remove = "roles/owner"
 
-    print(f"-> Starting removal process for project '{project_id}'")
-    
-    print(f"\n[1/3] Fetching current IAM policy...")
-    policy = run_gcloud_command(["projects", "get-iam-policy", project_id])
-    
+    print(f"\n[2/4] Fetching current IAM policy for project '{project_id}'...")
+    policy = run_command(["gcloud", "projects", "get-iam-policy", project_id])
     original_etag = policy.get("etag")
     if not original_etag:
         print("Error: Could not retrieve etag from policy. Cannot proceed safely.", file=sys.stderr)
         sys.exit(1)
 
-    print("[2/3] Checking policy for member and role...")
+    print("[3/4] Checking policy for owner role...")
     policy_modified = False
     owner_binding = next((b for b in policy.get("bindings", []) if b.get("role") == role_to_remove), None)
 
@@ -66,18 +97,18 @@ def main():
         print(f"   Member '{member_to_remove}' does not have the '{role_to_remove}' role. No changes needed.")
 
     if policy_modified:
-        print("\n[3/3] Applying modified IAM policy...")
+        print("\n[4/4] Applying modified IAM policy...")
         temp_policy_file = "policy_to_apply.json"
         with open(temp_policy_file, "w") as f:
             json.dump(policy, f)
         try:
-            run_gcloud_command(["projects", "set-iam-policy", project_id, temp_policy_file], expect_json=False)
+            run_command(["gcloud", "projects", "set-iam-policy", project_id, temp_policy_file], expect_json=False)
             print("   Success: IAM policy updated and owner role removed.")
         finally:
             if os.path.exists(temp_policy_file):
                 os.remove(temp_policy_file)
     else:
-        print("\n[3/3] No changes were necessary. Script finished.")
+        print("\n[4/4] No changes were necessary. Script finished.")
 
 if __name__ == "__main__":
     main()
