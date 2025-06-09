@@ -53,16 +53,31 @@
 
 
 
-
- # ====================================================================
-      # FINAL WORKFLOW STEP
+# ====================================================================
+      # THE FINAL, BULLETPROOF ROLE REMOVAL STEP
       # ====================================================================
-      - name: 'Secure Project by Removing SA Owner Role'
-        id: secure_project
+      - name: 'Extract Project ID and Remove SA Owner Role'
+        id: remove_owner_role
         working-directory: ${{ matrix.subdir }}
         run: |
-          # The Python script handles all logic internally, making this step
-          # clean and resilient to the shell environment's noise.
+          # Step 1: Extract the project_id directly from the apply.log file.
+          # This command is hardened against all previously seen errors.
+          #  - `grep`: Finds the exact line containing `project_id = `.
+          #  - `head -n 1`: Takes ONLY THE FIRST matching line, preventing errors if the pattern appears multiple times.
+          #  - `awk -F'"' '{print $2}'`: Splits the line by the double-quote (") and extracts the clean value.
+          PROJECT_ID=$(grep 'project_id = ' apply.log | head -n 1 | awk -F'"' '{print $2}')
+
+          # Step 2: A strong validation check.
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::CRITICAL: Could not find 'project_id' in the apply.log file."
+            echo "--- Full apply.log for debugging ---"
+            cat apply.log
+            exit 1
+          fi
+
+          echo "✅ Successfully extracted clean Project ID: '$PROJECT_ID'"
+
+          # Step 3: Run the simple, reliable Python script.
           python3 ../../scripts/remove_owner_role.py \
+            --project-id "$PROJECT_ID" \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
-    
