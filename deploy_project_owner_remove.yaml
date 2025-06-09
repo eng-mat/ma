@@ -54,30 +54,19 @@
 
 
 
-    execute_apply:
-    name: 'Execute Terraform Apply'
-    # ... other job config ...
-    steps:
-      # ... your checkout, auth, setup, init, plan steps ...
-
-      - name: 'Apply Terraform and Save Log'
-        id: terraform_apply
-        working-directory: ${{ matrix.subdir }}
-        # This command now saves the entire output to 'apply.log'
-        run: terraform apply -input=false --auto-approve -no-color 2>&1 | tee apply.log
-
-      # ====================================================================
-      # NEW, SIMPLER ROLE REMOVAL STEP
+  # ====================================================================
+      # THE DEFINITIVE, FINAL STEP
       # ====================================================================
       - name: 'Remove SA Owner Role from Terraform Log'
         id: remove_owner_role
         working-directory: ${{ matrix.subdir }}
         run: |
-          # Step 1: Extract the project_id directly from the apply.log file.
-          # This is robust and avoids running any more terraform commands.
-          PROJECT_ID=$(grep 'project_id = ' apply.log | awk -F'"' '{print $2}')
+          # Step 1: This extraction is now more specific and robust.
+          # It finds the line with `project_id` and then uses `sed` to
+          # isolate ONLY the value within the quotes.
+          PROJECT_ID=$(grep -A 2 'project_id' apply.log | tail -1 | sed 's/[^"]*"\([^"]*\)".*/\1/')
 
-          # Validation to ensure the ID was found
+          # Validation to ensure the ID was found and is clean
           if [ -z "$PROJECT_ID" ]; then
             echo "::error::Could not find 'project_id' in the apply.log file."
             echo "--- Full apply.log for debugging ---"
@@ -85,7 +74,7 @@
             exit 1
           fi
 
-          echo "Successfully extracted Project ID from log: $PROJECT_ID"
+          echo "Final clean Project ID to be used: '$PROJECT_ID'"
 
           # Step 2: Run the simple Python script with the clean Project ID
           python3 ../../scripts/remove_owner_role.py \
