@@ -48,3 +48,46 @@
           # 2. Safely removes the owner role using the read-modify-write pattern.
           python3 ../../scripts/remove_owner_role.py \
             --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
+
+
+
+
+
+
+    execute_apply:
+    name: 'Execute Terraform Apply'
+    # ... other job config ...
+    steps:
+      # ... your checkout, auth, setup, init, plan steps ...
+
+      - name: 'Apply Terraform and Save Log'
+        id: terraform_apply
+        working-directory: ${{ matrix.subdir }}
+        # This command now saves the entire output to 'apply.log'
+        run: terraform apply -input=false --auto-approve -no-color 2>&1 | tee apply.log
+
+      # ====================================================================
+      # NEW, SIMPLER ROLE REMOVAL STEP
+      # ====================================================================
+      - name: 'Remove SA Owner Role from Terraform Log'
+        id: remove_owner_role
+        working-directory: ${{ matrix.subdir }}
+        run: |
+          # Step 1: Extract the project_id directly from the apply.log file.
+          # This is robust and avoids running any more terraform commands.
+          PROJECT_ID=$(grep 'project_id = ' apply.log | awk -F'"' '{print $2}')
+
+          # Validation to ensure the ID was found
+          if [ -z "$PROJECT_ID" ]; then
+            echo "::error::Could not find 'project_id' in the apply.log file."
+            echo "--- Full apply.log for debugging ---"
+            cat apply.log
+            exit 1
+          fi
+
+          echo "Successfully extracted Project ID from log: $PROJECT_ID"
+
+          # Step 2: Run the simple Python script with the clean Project ID
+          python3 ../../scripts/remove_owner_role.py \
+            --project-id "$PROJECT_ID" \
+            --service-account-email "${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}"
