@@ -9,7 +9,7 @@ on:
         type: choice
         options:
           - 'gcp-netnet-d-vie'
-          - 'gcp-hcb-shared-hub'
+          - 'dhgh-hub'
           - 'Production_View'
           - 'Development_View'
       supernet_ip:
@@ -17,9 +17,9 @@ on:
         required: true
         type: choice
         options:
-          - '100.45.10.0/12 # Test Supernet'
-          - '10.10.0.0/17 # supernet-gcp-hcb-shared-hub'
-          - '10.0.0.0/8 # Production Main Supernet'
+          - '100.45.10.4/13 # Test Supernet'
+          - '10.10.4.0/18 # supernet-dhgh-hub'
+          - '10.10.0.100/4 # Production Main Supernet'
       subnet_name:
         description: 'Subnet Name (will be used as comment in Infoblox)'
         required: true
