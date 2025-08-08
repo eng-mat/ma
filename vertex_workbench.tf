@@ -1,3 +1,5 @@
+#sudo find / -xdev -type f \( -name "id_rsa" -o -name "id_ed25519" -o -name "id_dsa" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null
+
 #variables.tf
 variable "service_project" {}
 variable "host_project" {}
