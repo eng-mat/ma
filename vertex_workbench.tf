@@ -1,4 +1,6 @@
 #sudo find / -xdev -type f \( -name "id_rsa" -o -name "id_ed25519" -o -name "id_dsa" -o -name "*.pem" -o -name "*.key" \) 2>/dev/null
+gcloud secrets create [SECRET_NAME] --replication-policy="automatic"
+gcloud secrets versions add [SECRET_NAME] --data-file="key.json"
 
 #variables.tf
 variable "service_project" {}
