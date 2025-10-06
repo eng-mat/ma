@@ -1,44 +1,87 @@
-AI Platform (Training and Prediction)
-AlloyDB for PostgreSQL API
-Analytics Hub API
-Artifact Registry API
-AutoML API
-BigQuery API
-Chronicle API
-Cloud Asset API
-Cloud Bigtable API
-Cloud Composer API
-Cloud Data Catalog API
-Cloud Data Loss Prevention (DLP) API
-Cloud Healthcare API
-Cloud Key Management Service (KMS) API
-Cloud Logging API
-Cloud Monitoring API
-Cloud Natural Language API
-Cloud Source Repositories API
-Cloud Spanner API
-Cloud Speech-to-Text API
-Cloud SQL Admin API
-Cloud Storage API
-Cloud Text-to-Speech API
-Cloud Translation API
-Cloud Video Intelligence API
-Cloud Vision API
-Contact Center AI Insights API
-Container Registry API
-Database Migration Service API
-Dataflow API
-Dataform API
-Dataplex API
-Dataproc API
-Datastore API
-Datastream API
-Document AI API
-Filestore API
-Firestore API
-Looker (Google Cloud core)
-Memorystore for Redis/Memcached API
-Pub/Sub API
-Secret Manager API
-Security Command Center API
-Vertex AI API
+ml.googleapis.com AI Platform (Training and Prediction)
+
+alloydb.googleapis.com AlloyDB for PostgreSQL API
+
+analyticshub.googleapis.com Analytics Hub API
+
+artifactregistry.googleapis.com Artifact Registry API
+
+automl.googleapis.com AutoML API
+
+bigquery.googleapis.com BigQuery API
+
+chronicle.googleapis.com Chronicle API
+
+cloudasset.googleapis.com Cloud Asset API
+
+bigtable.googleapis.com / bigtableadmin.googleapis.com Cloud Bigtable API
+
+composer.googleapis.com Cloud Composer API
+
+datacatalog.googleapis.com Cloud Data Catalog API
+
+dlp.googleapis.com Cloud Data Loss Prevention (DLP) API
+
+healthcare.googleapis.com Cloud Healthcare API
+
+cloudkms.googleapis.com Cloud Key Management Service (KMS) API
+
+logging.googleapis.com Cloud Logging API
+
+monitoring.googleapis.com Cloud Monitoring API
+
+language.googleapis.com Cloud Natural Language API
+
+sourcerepo.googleapis.com Cloud Source Repositories API
+
+spanner.googleapis.com Cloud Spanner API
+
+speech.googleapis.com Cloud Speech-to-Text API
+
+sqladmin.googleapis.com Cloud SQL Admin API
+
+storage.googleapis.com Cloud Storage API
+
+texttospeech.googleapis.com Cloud Text-to-Speech API
+
+translate.googleapis.com Cloud Translation API
+
+videointelligence.googleapis.com Cloud Video Intelligence API
+
+vision.googleapis.com Cloud Vision API
+
+contactcenterinsights.googleapis.com Contact Center AI Insights API
+
+containerregistry.googleapis.com Container Registry API
+
+datamigration.googleapis.com Database Migration Service API
+
+dataflow.googleapis.com Dataflow API
+
+dataform.googleapis.com Dataform API
+
+dataplex.googleapis.com Dataplex API
+
+dataproc.googleapis.com Dataproc API
+
+datastore.googleapis.com Datastore API
+
+datastream.googleapis.com Datastream API
+
+documentai.googleapis.com Document AI API
+
+file.googleapis.com Filestore API
+
+firestore.googleapis.com Firestore API
+
+looker.googleapis.com Looker (Google Cloud core)
+
+redis.googleapis.com / memcache.googleapis.com Memorystore for Redis/Memcached API
+
+pubsub.googleapis.com Pub/Sub API
+
+secretmanager.googleapis.com Secret Manager API
+
+securitycenter.googleapis.com Security Command Center API
+
+aiplatform.googleapis.com Vertex AI API
