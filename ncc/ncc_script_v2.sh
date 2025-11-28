@@ -151,8 +151,45 @@ gcloud compute firewall-rules create "allow-corporate-inbound" \
     --priority=1000 \
     --description="Allow specific Corp Apps from On-Prem via Cisco Hub"
 
-echo ">> Phase 1 Complete. Ready for Zscaler Deployment Team."
 
+#################################################
+# ==============================================================================
+# EXPLICIT DENY INGRESS (LOGGING ENABLED)
+# ==============================================================================
+
+export SERVICE_VPC_NAME="vpc-service-prod" 
+export MGMT_VPC_NAME="vpc-zscaler-mgmt" 
+export PROJECT_ID="your-project-id"
+
+gcloud config set project $PROJECT_ID
+
+# 1. Deny Ingress - Service VPC (Workloads)
+# Catches lateral movement attempts or rogue internet traffic.
+echo ">> Creating Explicit Deny Ingress for Service VPC..."
+gcloud compute firewall-rules create "deny-service-ingress-all" \
+    --network=$SERVICE_VPC_NAME \
+    --action=DENY \
+    --direction=INGRESS \
+    --rules=all \
+    --source-ranges=0.0.0.0/0 \
+    --priority=65000 \
+    --enable-logging \
+    --description="Explicitly Block and Log all unauthorized ingress traffic"
+
+# 2. Deny Ingress - Management VPC (Zscaler Mgmt)
+# Protects the Zscaler management interfaces from unauthorized probing.
+echo ">> Creating Explicit Deny Ingress for Mgmt VPC..."
+gcloud compute firewall-rules create "deny-mgmt-ingress-all" \
+    --network=$MGMT_VPC_NAME \
+    --action=DENY \
+    --direction=INGRESS \
+    --rules=all \
+    --source-ranges=0.0.0.0/0 \
+    --priority=65000 \
+    --enable-logging \
+    --description="Explicitly Block and Log all unauthorized ingress traffic"
+
+echo ">> Deny Rules Applied. Unauthorized traffic will now appear in Cloud Logging."
 
 #################################
 # Phase 2: The Routing
