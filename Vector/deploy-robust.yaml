@@ -1,0 +1,109 @@
+name: "Deploy Vector Search (Robust)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      # --- Identity ---
+      project_id:
+        description: "Target Service Project ID"
+        required: true
+      region:
+        description: "GCP Region"
+        required: true
+        default: "us-central1"
+        type: choice
+        options: ["us-central1", "us-east1", "us-west1"]
+      
+      # --- Core Config ---
+      display_name:
+        description: "Resource Name (e.g., finance-search)"
+        required: true
+      dimensions:
+        description: "Vector Dimensions (e.g., 768)"
+        required: true
+        default: "768"
+      index_type:
+        description: "Algorithm Type"
+        required: true
+        default: "tree-ah"
+        type: choice
+        options: ["tree-ah", "brute-force"]
+      
+      # --- Advanced Config ---
+      shard_size:
+        description: "Shard Size"
+        required: true
+        default: "SHARD_SIZE_MEDIUM"
+        type: choice
+        options: ["SHARD_SIZE_SMALL", "SHARD_SIZE_MEDIUM", "SHARD_SIZE_LARGE"]
+      update_method:
+        description: "Update Method"
+        required: true
+        default: "BATCH_UPDATE"
+        type: choice
+        options: ["BATCH_UPDATE", "STREAM_UPDATE"]
+      gcs_uri:
+        description: "Initial Data GCS URI (Optional)"
+        required: false
+      
+      # --- Network ---
+      enable_psc:
+        description: "Enable Private Service Connect?"
+        required: true
+        default: "true"
+        type: boolean
+      allowlist_projects:
+        description: "Allowed Project IDs (Comma Separated)"
+        required: true
+        default: "host-project-prod,host-project-nonprod"
+
+      # --- Compute ---
+      machine_type:
+        description: "Deployment Machine Type"
+        required: true
+        default: "e2-standard-4"
+      min_replicas:
+        description: "Min Replicas"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Vertex AI SDK
+        run: pip install google-cloud-aiplatform
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/123/locations/global/workloadIdentityPools/gh-pool/providers/gh-provider"
+          service_account: "automation-sa@admin-project.iam.gserviceaccount.com"
+
+      - name: Execute Deployment
+        run: |
+          python scripts/deploy_vector_robust.py \
+            --project_id "${{ inputs.project_id }}" \
+            --region "${{ inputs.region }}" \
+            --display_name "${{ inputs.display_name }}" \
+            --dimensions ${{ inputs.dimensions }} \
+            --index_type "${{ inputs.index_type }}" \
+            --shard_size "${{ inputs.shard_size }}" \
+            --update_method "${{ inputs.update_method }}" \
+            --gcs_uri "${{ inputs.gcs_uri }}" \
+            --enable_psc "${{ inputs.enable_psc }}" \
+            --allowlist_projects "${{ inputs.allowlist_projects }}" \
+            --machine_type "${{ inputs.machine_type }}" \
+            --min_replicas ${{ inputs.min_replicas }}
