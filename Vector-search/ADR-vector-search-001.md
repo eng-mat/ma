@@ -140,27 +140,27 @@ DisplayName immutable → Enforce strict naming in console.
 CMEK key missing → Pre-flight check in automation.
 Quotas (forwarding rules, etc.) → Include quota checks.
 
-References (Official Google Cloud Docs + Terraform Resources)
+****References (Official Google Cloud Docs + Terraform Resources)****
 
-Vertex AI Vector Search Overview: https://cloud.google.com/vertex-ai/docs/vector-search/overview
-Set up Vector Search with Private Service Connect: https://cloud.google.com/vertex-ai/docs/vector-search/private-service-connect
-Use Private Service Connect to access a Vector Search index from on-premises: https://cloud.google.com/vertex-ai/docs/general/vertex-psc-vector-search
-About accessing Vertex AI services through Private Service Connect endpoints: https://cloud.google.com/vertex-ai/docs/general/psc-endpoints
-Customer-managed encryption keys (CMEK) for Vertex AI (including Vector Search Index/Endpoint): https://cloud.google.com/vertex-ai/docs/general/cmek
-Manage indexes (includes batch/streaming, updates): https://cloud.google.com/vertex-ai/docs/vector-search/create-manage-index
-Deploy and manage public index endpoints (adapt for private): https://cloud.google.com/vertex-ai/docs/vector-search/deploy-index-public
-Querying private indexes (SDK + PSC usage): https://cloud.google.com/vertex-ai/docs/vector-search/query-index-vpc
-Terraform support for Vertex AI (full list of resources): https://cloud.google.com/vertex-ai/docs/start/use-terraform-vertex-ai
-Terraform: google_vertex_ai_index (core index creation, metadata, config, CMEK support): https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index
-Terraform: google_vertex_ai_index_endpoint (endpoint creation, PSC config fields like private_service_connect_config): https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index_endpoint
-Terraform: google_vertex_ai_index_endpoint_deployed_index (deploying indexes to endpoint, replicas, etc.): https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index_endpoint_deployed_index
-Terraform: google_vertex_ai_index data source (for lookups/updates): https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/google_vertex_ai_index
-RAG infrastructure reference architecture using Vertex AI + Vector Search: https://cloud.google.com/architecture/gen-ai-rag-vertex-ai-vector-search
-Vector Search pricing and calculator (for cost modeling): https://cloud.google.com/vertex-ai/pricing#vectorsearch
+**Vertex AI Vector Search Overview:** https://cloud.google.com/vertex-ai/docs/vector-search/overview
+**Set up Vector Search with Private Service Connect:** https://cloud.google.com/vertex-ai/docs/vector-search/private-service-connect
+**Use Private Service Connect to access a Vector Search index from on-premises:** https://cloud.google.com/vertex-ai/docs/general/vertex-psc-vector-search
+**About accessing Vertex AI services through Private Service Connect endpoints:** https://cloud.google.com/vertex-ai/docs/general/psc-endpoints
+**Customer-managed encryption keys (CMEK) for Vertex AI (including Vector Search Index/Endpoint):** https://cloud.google.com/vertex-ai/docs/general/cmek
+**Manage indexes (includes batch/streaming, updates):** https://cloud.google.com/vertex-ai/docs/vector-search/create-manage-index
+**Deploy and manage public index endpoints (adapt for private):** https://cloud.google.com/vertex-ai/docs/vector-search/deploy-index-public
+**Querying private indexes (SDK + PSC usage):** https://cloud.google.com/vertex-ai/docs/vector-search/query-index-vpc
+**Terraform support for Vertex AI (full list of resources):** https://cloud.google.com/vertex-ai/docs/start/use-terraform-vertex-ai
+**Terraform: google_vertex_ai_index (core index creation, metadata, config, CMEK support):** https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index
+**Terraform: google_vertex_ai_index_endpoint (endpoint creation, PSC config fields like private_service_connect_config):** https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index_endpoint
+**Terraform: google_vertex_ai_index_endpoint_deployed_index (deploying indexes to endpoint, replicas, etc.):** https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/vertex_ai_index_endpoint_deployed_index
+**Terraform: google_vertex_ai_index data source (for lookups/updates):** https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/google_vertex_ai_index
+**RAG infrastructure reference architecture using Vertex AI + Vector Search:** https://cloud.google.com/architecture/gen-ai-rag-vertex-ai-vector-search
+**Vector Search pricing and calculator (for cost modeling):** https://cloud.google.com/vertex-ai/pricing#vectorsearch
 
-Next Steps for Automation Team
+**Next Steps for Automation Team**
 
-Terraform module: Create Index → Index Endpoint (PSC enabled + CMEK + allowlist) → Deployed Index.
+**Terraform module: Create Index → Index Endpoint (PSC enabled + CMEK + allowlist) → Deployed Index.**
 Return PSC IP and endpoint details to console.
 Support full CRUD + updates.
 Parameterize: region (must have pre-created connection policy), project allowlist, CMEK key name.
