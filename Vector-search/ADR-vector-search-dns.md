@@ -2,7 +2,7 @@
 
 **Status:** Draft (One-Time Prerequisite)  
 **Date:** March 01, 2026  
-**Author:** Matthew (GCP Engineering Team)  
+**Author:**(GCP Engineering Team)  
 **Audience:** Networking Team / DNS Admins (Host Project Owners)  
 **Related ADR:** ADR-VectorSearch-001
 
