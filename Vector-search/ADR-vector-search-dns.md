@@ -53,7 +53,7 @@ This **exact same self-service** can be used for Vector Search PSC endpoints:
 
 This keeps things consistent — app teams already know the flow from GKE/ILB usage.
 
-## One-Time Setup Steps (Networking Team)
+## One-Time Setup Steps (DNS Team/Cloud Engineering)
 
 If not already done for other PSC/internal services:
 
