@@ -8,14 +8,16 @@
 
 ## Purpose
 
-Deploy a managed **Secure Web Proxy (SWP)** in explicit forward-proxy mode per region in each host project (non-prod/prod).  
+Deploy a managed **Secure Web Proxy (SWP)** in explicit forward-proxy mode per region in each host project (non-prod/prod).
 
 The SWP:
 - Listens on port 3128 (standard explicit proxy port)
 - Allows **HTTPS only** (CONNECT method to destination port 443)
 - Rejects plain HTTP
 - Forwards all traffic upstream to your existing Zscaler (no SWP inspection, filtering, decryption, or logging)
-- Ensures Agent Engine internet egress goes through Zscaler (via your existing Cloud NAT + Zscaler network tag path)
+- Ensures Agent Engine outbound/internet egress goes through Zscaler (via your existing Cloud NAT + Zscaler network tag path)
+
+Important: Internal-only agents do **not** need to configure the proxy — traffic stays private via PSC-I. Only agents that require outbound/internet access will point to this SWP (via HTTPS_PROXY config).
 
 This eliminates VM patching, open-source software approval, and operational overhead.
 
@@ -25,7 +27,7 @@ This eliminates VM patching, open-source software approval, and operational over
 - Existing Zscaler egress path (network tag + Cloud NAT + Zscaler Cloud Connector)
 - Zscaler proxy details known (IP:port or hostname:port where SWP should forward CONNECT requests)
 - PSC-I subnet already exists (or will be created) in the same region
-- APIs enabled in host project: compute.googleapis.com, networkservices.googleapis.com
+- APIs enabled in host project: compute.googleapis.com, networkservices.googleapis.com, dns.googleapis.com
 
 ## Step-by-Step Setup (chronological gcloud commands)
 
@@ -41,7 +43,7 @@ gcloud compute networks subnets create swp-proxy-only-us-central1 \
   --range=10.202.0.0/24 \
   --purpose=REGIONAL_MANAGED_PROXY
 
-Use /24 or larger if you expect high concurrent connections (rare for Agent Engine)
+Use /24 or larger if high concurrent connections expected (rare for Agent Engine)
 Do not use this subnet for anything else
 
 Step 2 – Create the Secure Web Proxy gateway (explicit mode)
@@ -60,7 +62,7 @@ Bashgcloud network-security secure-web-proxy proxy-policy create agentengine-htt
   --rule-match-destination-port=443 \
   --rule-match-protocol=https \
   --priority=1000
-Add a default deny rule for everything else (including plain HTTP):
+Add default deny for everything else (including plain HTTP):
 Bashgcloud network-security secure-web-proxy proxy-policy create agentengine-deny-all \
   --project=HOST_PROJECT_ID \
   --location=us-central1 \
@@ -75,8 +77,8 @@ Bashgcloud network-services gateway create agentengine-swp-gateway-us-central1 \
   --upstream-proxy=your-zscaler-proxy.example.com:8080 \
   --upstream-proxy-type=HTTP_CONNECT
 
-Replace your-zscaler-proxy.example.com:8080 with your actual Zscaler explicit proxy endpoint (IP:port or hostname:port)
-If Zscaler uses authentication, add credentials via --upstream-proxy-username / --upstream-proxy-password flags (or use secrets manager if preferred)
+Replace your-zscaler-proxy.example.com:8080 with your actual Zscaler explicit proxy endpoint
+If Zscaler requires authentication, add --upstream-proxy-username and --upstream-proxy-password flags (or integrate with Secret Manager)
 
 Step 5 – Create firewall rules (Host VPC)
 Allow PSC-I subnet(s) to reach SWP on port 3128:
@@ -87,7 +89,7 @@ Bashgcloud compute firewall-rules create allow-psci-to-swp-3128 \
   --network=HOST_VPC_NAME \
   --action=ALLOW \
   --rules=tcp:3128 \
-  --source-ranges=10.200.0.0/20 \          # ← your PSC-I subnet CIDR (repeat for additional subnets)
+  --source-ranges=10.200.0.0/20 \          # ← your PSC-I subnet CIDR (repeat --source-ranges for additional subnets)
   --destination-ranges=10.202.0.0/24       # ← proxy-only subnet range
 Allow SWP health checks (Google-managed):
 Bashgcloud compute firewall-rules create allow-healthcheck-to-swp \
@@ -99,24 +101,42 @@ Bashgcloud compute firewall-rules create allow-healthcheck-to-swp \
   --rules=tcp:3128 \
   --source-ranges=35.191.0.0/16,130.211.0.0/22 \  # GCP health check ranges
   --destination-ranges=10.202.0.0/24
-Step 6 – Verify & Test
+Step 6 – Create one-time regional SWP hostname A record (central, not per-agent)
+In the host project's private DNS zone (e.g. agentengine-private-zone):
+Bashgcloud dns record-sets transaction start --zone=agentengine-private-zone --project=HOST_PROJECT_ID
 
-Get SWP internal IP (or use DNS name if you set one up):Bashgcloud network-services gateway describe agentengine-swp-gateway-us-central1 \
+gcloud dns record-sets transaction add agentengine-swp-us-central1.mycompany.internal. \
+  --name=agentengine-swp-us-central1.mycompany.internal. \
+  --ttl=300 \
+  --type=A \
+  --value=<SWP_GATEWAY_INTERNAL_IP> \
+  --zone=agentengine-private-zone \
+  --project=HOST_PROJECT_ID
+
+gcloud dns record-sets transaction execute --zone=agentengine-private-zone --project=HOST_PROJECT_ID
+
+Replace <SWP_GATEWAY_INTERNAL_IP> with the actual internal IP from Step 7 (below)
+Use consistent naming: agentengine-swp-<env>-<region>.mycompany.internal (e.g. nonprod-us-central1, prod-europe-west4)
+This single hostname is used by all agents in that host/VPC/region — no per-agent records needed
+
+Step 7 – Verify & Test
+Get SWP gateway internal IP:
+Bashgcloud network-services gateway describe agentengine-swp-gateway-us-central1 \
   --project=HOST_PROJECT_ID \
   --location=us-central1
-Test from a VM in the VPC (PSC-I subnet range):Bash# Should succeed (HTTPS)
-curl -x http://<swp-ip>:3128 https://www.google.com
+Test from a VM in the VPC (PSC-I subnet range):
+Bash# Should succeed (HTTPS)
+curl -x http://agentengine-swp-us-central1.mycompany.internal:3128 https://www.google.com
 
 # Should fail (HTTP blocked)
-curl -x http://<swp-ip>:3128 http://example.com
-Confirm in Zscaler logs that traffic arrives from the SWP-forwarded path
+curl -x http://agentengine-swp-us-central1.mycompany.internal:3128 http://example.com
+Confirm in Zscaler logs that traffic arrives via the SWP-forwarded path.
+Step 8 – Record & Handover
 
-Step 7 – Record & Handover
-
-SWP internal IP (or regional DNS name if created)
+Regional SWP hostname: agentengine-swp-<env>-<region>.mycompany.internal:3128
 Port: 3128
 Allowed sources: PSC-I subnet CIDR(s)
-Share with Automation team for self-service parameterization
+Share with Automation team: Hostname is pre-filled in console based on region/host selection
 
 Repeat for each region and each host project (non-prod/prod).
-This setup provides managed, HTTPS-only egress through Zscaler with no double inspection and minimal cost.
+This setup provides managed, HTTPS-only egress through Zscaler with no double inspection, minimal cost, and a stable regional hostname for all agents.
