@@ -13,7 +13,7 @@ App teams need **Vertex AI Agent Engine** for all use cases: tool calling, funct
 This self-service must:
 - Stay **100% private**
 - Enforce **CMEK** on compatible resources
-- Force **all internet egress** through Zscaler using **HTTPS-only** (no HTTP allowed)
+- Route outbound/internet traffic through Zscaler using **HTTPS-only** (no HTTP allowed) — internal traffic stays direct via PSC-I
 - Support creation, updates, scaling, and deletion
 - Work across our regions and host VPCs
 - Seamlessly support additional PSC-I subnets in future
@@ -26,7 +26,8 @@ We will deliver **Vertex AI Agent Engine** using **Private Service Connect Inter
 - One-time large PSC-I subnet per host/region (shared)
 - One-time proxy-only subnet and SWP gateway per region
 - Network attachment supports multiple subnets (future-proof)
-- Internet egress forced through SWP (HTTPS-only, port 3128) — no direct internet or plain HTTP allowed
+- Internal traffic routes directly via PSC-I (no SWP)
+- Outbound/internet traffic (when needed) routes through SWP (HTTPS-only, port 3128) — app team configures explicitly
 - SWP setup documented separately for Cloud Engineering to implement
 
 ## Detailed Architecture
@@ -41,7 +42,6 @@ We will deliver **Vertex AI Agent Engine** using **Private Service Connect Inter
   - Create large PSC-I subnet (e.g. /20) — shared
   - Create proxy-only subnet (purpose=REGIONAL_MANAGED_PROXY)
   - Design supports adding more PSC-I subnets later
-
 - **Per-service-project / per-deployment**:
   - Create Network Attachment referencing PSC-I subnet(s) (multiple supported)
   - Agent Engine configured with:
@@ -50,12 +50,13 @@ We will deliver **Vertex AI Agent Engine** using **Private Service Connect Inter
       network_attachment: "projects/${SERVICE_PROJECT}/regions/${REGION}/networkAttachments/agentengine-psc-attachment-${REGION}"
 
 Internal traffic (GKE, Cloud Run, on-prem) routes transitively via PSC-I
-Internet traffic: Forced through SWP (see section 3)
+Outbound/internet traffic: Only when app team configures HTTPS_PROXY to regional SWP hostname (see section 3)
 
-3. Egress (Mandatory Zscaler — HTTPS-Only)
+3. Egress (Mandatory Zscaler — HTTPS-Only, Optional)
 
 No direct internet from Agent Engine runtime
-All non-RFC1918 traffic routes to SWP at http://swp-ip:3128 (explicit HTTPS_PROXY)
+Internal-only agents: No SWP needed — traffic stays private via PSC-I
+Outbound/internet traffic (when required): App team configures explicit HTTPS_PROXY to regional SWP hostname (pre-filled in console based on region/host)
 Secure Web Proxy:
 Listens only on port 3128
 Configured in explicit forward mode with upstream proxy pointing to Zscaler (no SWP inspection, filtering, or decryption)
@@ -98,7 +99,8 @@ Friendly names (optional): Use existing self-service DNS portal (A record to PSC
 9. Self-Service Capabilities (Automation Must Support)
 
 Full Agent Engine feature set (all use cases: tool calling, grounding, multi-agent workflows, internal service integrations)
-Region/host selection, scaling (max_instances), CMEK validation, SWP IP
+Region/host selection, scaling (max_instances), CMEK validation
+Optional outbound/internet checkbox (shows pre-filled regional SWP hostname suggestion only if checked)
 Updates/redeploys supported
 
 10. Observability & Cost
@@ -130,8 +132,8 @@ Terraform: google_compute_network_attachment: https://registry.terraform.io/prov
 
 Next Steps for Automation Team
 
-Terraform: APIs → IAM → Network Attachment (multi-subnet support) → CMEK → Agent Engine (PSC-I + HTTPS_PROXY=...:3128 + DNS peering)
-Parameterize: region, SWP IP (port 3128), CMEK key
+Terraform: APIs → IAM → Network Attachment (multi-subnet support) → CMEK → Agent Engine (PSC-I + optional HTTPS_PROXY + DNS peering)
+Parameterize: region, SWP hostname (port 3128), CMEK key
 Pre-checks: attachment, group membership, key access
 Return PSC IP + SWP details
 
