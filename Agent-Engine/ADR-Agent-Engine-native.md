@@ -57,8 +57,8 @@ Key points:
     Internal traffic routes transitively via PSC-I
 Outbound/internet traffic: only when app team sets HTTPS_PROXY to regional SWP hostname (see section 3)
 
-3. **Egress (Mandatory Zscaler — HTTPS-Only, Optional)**
 
+3. **Egress (Mandatory Zscaler — HTTPS-Only, Optional)**
 - No direct internet from Agent Engine runtime
 - Internal-only agents: No SWP needed — traffic stays private via PSC-I
 - Outbound/internet traffic (when required): App team configures explicit HTTPS_PROXY to regional SWP hostname (e.g. http://agentengine-swp-us-- central1.mycompany.internal:3128)
@@ -78,12 +78,10 @@ encryptionSpec:
 - AI Platform service agent granted roles/cloudkms.cryptoKeyEncrypterDecrypter
 
 5. **IAM & Security**
-
 - Host project: AI Platform service agent in local group (compute.networkUser + dns.peer)
 - Service project: Org-level custom role + roles/dns.peer
 
 6. **Required APIs (Service Project)**
-
 - aiplatform.googleapis.com
 - vertexai.googleapis.com
 - compute.googleapis.com
@@ -91,12 +89,10 @@ encryptionSpec:
 - networkconnectivity.googleapis.com
 
 7. **Firewall Rules (Host VPC — one-time)**
-
 - PSC-I subnet range(s) → internal workloads
 - PSC-I subnet range(s) → SWP on port 3128 only
 
 8. **DNS (Optional Friendly Name at Deployment)**
-
 - Automatic DNS peering via dns_peering_configs (app team configures for internal domains)
 - Optional friendly name during self-service creation:
 - App team provides desired hostname (e.g. agent-myapp-us-central1.mycompany.internal)
@@ -110,7 +106,6 @@ encryptionSpec:
 - One-time private zone attachment: See DNS-AgentEngine-OneTime.md
 
 9. **Self-Service Capabilities (Automation Must Support)**
-
 - Full Agent Engine feature set
 - Region/host selection, scaling (max_instances), CMEK validation
 - Optional friendly DNS name input (text field + validation: ends with .mycompany.internal)
@@ -119,26 +114,22 @@ encryptionSpec:
 - Updates/redeploys supported
 
 10. **Observability & Cost**
-
 - Vertex AI metrics/logging
 - Labels for cost allocation
 - Alerts on scaling, latency, quota
 
 **Alternatives Considered**
-
 - VM/MIG proxy: Rejected — patching, approval issues
 - Direct egress / HTTP allowed: Rejected — violates policy
 - Mandatory DNS name: Rejected — must be optional
 
 **Risks & Mitigations**
-
 - IP exhaustion: Large /20 + monitoring
 - SWP availability: Managed regional service
 - DNS name conflicts: Automation validates uniqueness
 - Misconfiguration of outbound: Console guidance + optional outbound checkbox
 
 **References**
-
 - Vertex AI Agent Engine Overview: https://cloud.google.com/vertex-ai/docs/generative-ai/agents/overview
 - PSC Interface for Agent Engine: https://cloud.google.com/vertex-ai/docs/general/psc-interfaces
 - Set up PSC-I: https://cloud.google.com/vertex-ai/docs/general/vpc-psc-i-setup
@@ -147,7 +138,6 @@ encryptionSpec:
 - Terraform: google_compute_network_attachment: https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_network_attachment
 
 **Next Steps for Automation Team**
-
 - Terraform: APIs → IAM → Network Attachment → CMEK → Agent Engine (PSC-I + optional dns_peering_configs + optional A record creation)
 - Add optional inputs: friendly_domain (string, validation: ends with .mycompany.internal), outbound_needed (boolean)
 - If friendly_domain provided: Create A record via Cloud DNS API (Automation SA needs dns.admin or delegated permissions)
