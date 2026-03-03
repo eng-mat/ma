@@ -100,6 +100,7 @@ Add/remove deployed indexes.
 Delete with confirmations.
 
 Terraform module must handle updates (most fields mutable except displayName — enforce naming convention like vs-team-workload-region).
+
 6. Querying from Applications
 App teams:
 
@@ -108,6 +109,7 @@ Preferred: Use SDK with psc_network param — auto-resolves.
 Call match() or gRPC on port 10000 against the IP.
 
 Works from any Shared VPC workload.
+
 7. Observability, Monitoring & Cost
 Enable Vertex AI metrics/logging.
 Dashboards: latency, QPS, index size.
