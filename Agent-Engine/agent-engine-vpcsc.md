@@ -1,5 +1,4 @@
 # ADR-AgentEngine-001: Self-Service Private Vertex AI Agent Engine with PSC Interface, CMEK, Mandatory Zscaler Egress (HTTPS-Only), and VPC Service Controls
-
 **Status:** Draft
 **Date:** March 02, 2026
 **Author:** Matthew (GCP Engineering Team)
