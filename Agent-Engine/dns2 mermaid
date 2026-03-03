@@ -1,0 +1,83 @@
+graph TD
+
+    %% Zscaler Path
+    subgraph ZSC_PATH [Zscaler & Internet Path]
+        direction TB
+        ZConnector[Zscaler Cloud Connector]
+        ZCloud[Zscaler Cloud]
+        Internet((Internet))
+    end
+
+    %% Host Project VPC
+    subgraph HOST_VPC [Host Project VPC]
+        direction TB
+        DNS_Zone[Private DNS Zone<br/>Central SWP Hostname A Record]
+        SWP[SWP Gateway<br/>Port 3128, HTTPS-only]
+        PSCI_Subnet[[PSC-I Subnet]]
+        Internal_Services[Internal Services<br/>GKE, Cloud Run, etc.]
+    end
+
+    %% VPC Service Controls Perimeter
+    subgraph VPC_SC [VPC Service Controls Perimeter]
+        direction TB
+        subgraph SERVICE_PROJECT [App Team - Service Project]
+            Agent_Engine[Agent Engine Resource]
+            Network_Attachment[Network Attachment]
+        end
+    end
+
+    %% Google Tenant
+    subgraph TENANT [Google Tenant Project]
+        Agent_Runtime[Agent Runtime]
+    end
+
+    %% Internal Traffic Flows (Solid Blue/Green)
+    Agent_Runtime ===|PSC-I| Network_Attachment
+    Network_Attachment ===|Direct| PSCI_Subnet
+    PSCI_Subnet ===|Internal Traffic| Internal_Services
+
+    %% Outbound Traffic Flows (Dashed Orange/Red)
+    Agent_Runtime -.->|HTTPS_PROXY to SWP| SWP
+    SWP -.->|Upstream| ZConnector
+    ZConnector -.->|Inspection| ZCloud
+    ZCloud -.->|Egress| Internet
+
+    %% DNS Peering Flow
+    Agent_Runtime -.->|DNS Peering| DNS_Zone
+
+    %% VPC-SC Block
+    Agent_Runtime -.-x|VPC-SC Blocks Direct Egress| Internet
+
+    %% Legend
+    subgraph LEGEND [Legend: Flows & Security]
+        direction LR
+        L_Int[Internal Traffic / Direct]
+        L_Out[Outbound Traffic / Zscaler]
+        L_Block[Blocked by VPC-SC]
+    end
+
+    %% Styling Classes
+    classDef internal fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef outbound fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef dns fill:#e0f7fa,stroke:#00838f,stroke-width:2px;
+    classDef vpcsc stroke:#fbc02d,stroke-width:4px,stroke-dasharray: 5 5,fill:none;
+    classDef tenant fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef block fill:#ffebee,stroke:#c62828,stroke-width:2px;
+
+    %% Apply Classes
+    class Agent_Engine,Network_Attachment,PSCI_Subnet,Internal_Services,L_Int internal;
+    class SWP,ZConnector,ZCloud,Internet,L_Out outbound;
+    class DNS_Zone dns;
+    class VPC_SC vpcsc;
+    class Agent_Runtime,TENANT tenant;
+    class L_Block block;
+
+    %% Link Styles based on exact definition order
+    %% 0, 1, 2: Internal Flow
+    linkStyle 0,1,2 stroke:#1976d2,stroke-width:3px;
+    %% 3, 4, 5, 6: Outbound Flow
+    linkStyle 3,4,5,6 stroke:#e65100,stroke-width:3px,stroke-dasharray: 5 5;
+    %% 7: DNS Peering
+    linkStyle 7 stroke:#00838f,stroke-width:2px,stroke-dasharray: 5 5;
+    %% 8: VPC-SC Block indication
+    linkStyle 8 stroke:#c62828,stroke-width:2px,stroke-dasharray: 5 5;
