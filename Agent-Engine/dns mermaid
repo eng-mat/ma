@@ -1,0 +1,71 @@
+graph TD
+
+    %% Subgraph: Google Tenant Project
+    subgraph TENANT_PROJECT [Google Tenant Project]
+        Runtime[Agent Engine Runtime<br/>Internal-only by default]
+    end
+
+    %% Subgraph: App Team - Service Project
+    subgraph SERVICE_PROJECT [App Team - Service Project]
+        AppTeam[App Team / Self-Service Portal<br/>Deployment Input]
+    end
+
+    %% Subgraph: Host Project VPC (DNS Focus)
+    subgraph HOST_PROJECT [Host Project VPC - DNS Focus]
+        
+        subgraph DNS_ZONE [Private DNS Zone: mycompany.internal]
+            direction TB
+            SWP_A[Central A Record<br/>agentengine-swp-region.mycompany.internal<br/>Cloud Engineering Managed]
+            PSC_A[Optional Friendly A Record<br/>agent-myapp-region.mycompany.internal<br/>App Team Managed]
+        end
+        
+        SWP_GW[SWP Gateway IP<br/>Outbound Proxy]
+        PSC_IP[PSC Interface IP<br/>Internal Target]
+    end
+
+    %% DNS and Network Flows
+    Runtime -->|dns_peering_configs<br/>Automatic internal resolution| DNS_ZONE
+    Runtime -.->|Outbound configured:<br/>Uses pre-filled SWP hostname| SWP_A
+    AppTeam -.->|Optional friendly name creation| PSC_A
+    
+    %% Resolution Targets
+    SWP_A -->|Resolves to| SWP_GW
+    PSC_A -->|Resolves to| PSC_IP
+
+    %% Legend
+    subgraph LEGEND [Legend: DNS & Routing Flows]
+        direction LR
+        L_Int[Internal Resolution / Peering]
+        L_Out[Outbound DNS / Routing]
+        L_DNS[DNS Zones & Records]
+    end
+
+    %% Class Definitions (Colors/Styles)
+    classDef dns fill:#e0f7fa,stroke:#00838f,stroke-width:2px;
+    classDef internal fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef outbound fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    
+    classDef legend_int fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef legend_out fill:#fff3e0,stroke:#e65100,stroke-width:2px,stroke-dasharray: 5 5;
+    classDef legend_dns fill:#e0f7fa,stroke:#00838f,stroke-width:2px;
+
+    %% Apply Classes
+    class DNS_ZONE,SWP_A,PSC_A dns;
+    class Runtime,AppTeam,PSC_IP internal;
+    class SWP_GW outbound;
+    
+    class L_Int legend_int;
+    class L_Out legend_out;
+    class L_DNS legend_dns;
+
+    %% Link Styles (Matched to exact definition order above)
+    %% 0: Runtime -> DNS_ZONE (Solid blue/green for internal peering)
+    linkStyle 0 stroke:#1976d2,stroke-width:3px;
+    %% 1: Runtime -.-> SWP_A (Dashed orange for optional outbound)
+    linkStyle 1 stroke:#e65100,stroke-width:3px,stroke-dasharray: 5 5;
+    %% 2: AppTeam -.-> PSC_A (Dashed cyan/teal for optional creation)
+    linkStyle 2 stroke:#00838f,stroke-width:2px,stroke-dasharray: 5 5;
+    %% 3: SWP_A -> SWP_GW (Solid orange for outbound resolution target)
+    linkStyle 3 stroke:#e65100,stroke-width:2px;
+    %% 4: PSC_A -> PSC_IP (Solid blue/green for internal resolution target)
+    linkStyle 4 stroke:#1976d2,stroke-width:2px;
