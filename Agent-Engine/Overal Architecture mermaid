@@ -1,0 +1,94 @@
+graph TD
+
+    %% Subgraph: Zscaler & Internet Path
+    subgraph ZSC_PATH [Zscaler & Internet Path]
+        direction TB
+        Internet((Internet))
+        ZCloud[Zscaler Cloud<br/>DLP & Policy Enforcement]
+        ZConnector[Zscaler Cloud Connector<br/>via Cloud NAT]
+        
+        ZCloud --> Internet
+        ZConnector --> ZCloud
+    end
+
+    %% Subgraph: Host Project (Shared VPC)
+    subgraph HOST_PROJECT [Host Project - Shared VPC]
+        direction TB
+        
+        subgraph DNS_ZONE [Private DNS Zone: custom.company.internal]
+            SWP_DNS[SWP A Record:<br/>agentengine-swp-env-reg]
+            PSC_DNS[Optional A Record:<br/>PSC IP / Friendly Name]
+        end
+
+        subgraph PROXY_LAYER [Egress Control Layer]
+            SWP[Secure Web Proxy SWP<br/>Port 3128 / HTTPS-only]
+            ProxySubnet([Proxy-Only Subnet<br/>REGIONAL_MANAGED_PROXY])
+        end
+
+        PSCI_Subnet[[PSC-I Subnet<br/>10.10.10.10/23]]
+        InternalSvc[Internal Services<br/>GKE, DBs, On-Prem]
+
+        SWP --> ZConnector
+        ProxySubnet --- SWP
+    end
+
+    %% Subgraph: VPC Service Controls Perimeter
+    subgraph VPCSC_BOUNDARY [VPC Service Controls: AI Services Perimeter]
+        
+        subgraph SERVICE_PROJECT [App Team - Service Project]
+            AgentEngine[Vertex AI Agent Engine<br/>RAG / Tool Calling]
+            Automation[Automation SA<br/>Self-Service Portal]
+            PSC_Attach[Network Attachment<br/>agentengine-psc-attachment]
+        end
+        
+        subgraph TENANT_PROJECT [Google Tenant Project]
+            Runtime[Agent Engine Runtime<br/>Google Managed]
+        end
+    end
+
+    %% Internal Traffic Flows
+    Runtime <==>|PSC Interface| PSC_Attach
+    PSC_Attach <==>|Direct / No Proxy| PSCI_Subnet
+    PSCI_Subnet <==> InternalSvc
+
+    %% Outbound/Internet Traffic Flows
+    Runtime -.->|HTTPS_PROXY via SWP| SWP
+    
+    %% DNS & Configuration Flows
+    Runtime -.->|dns_peering_configs| DNS_ZONE
+    Automation -.->|Creates| PSC_DNS
+    Automation -.->|Pre-fills SWP Hostname| AgentEngine
+
+    %% Legend
+    subgraph LEGEND [Legend]
+        direction LR
+        L1[Internal / Private] --- L2[Outbound / Proxy Path]
+        L3[DNS / Resolution] --- L4[VPC-SC Boundary]
+    end
+
+    %% Styling
+    classDef internal fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef outbound fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef security stroke:#fbc02d,stroke-width:3px,stroke-dasharray: 5 5,fill:none;
+    classDef dns fill:#e0f7fa,stroke:#0097a7,stroke-width:2px;
+    classDef tenant fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef legend_int fill:#e3f2fd,stroke:#1976d2;
+    classDef legend_out fill:#fff3e0,stroke:#f57c00;
+    classDef legend_dns fill:#e0f7fa,stroke:#0097a7;
+    classDef legend_sec stroke:#fbc02d,stroke-dasharray: 5 5,fill:none;
+
+    class AgentEngine,PSC_Attach,PSCI_Subnet,InternalSvc internal;
+    class SWP,ProxySubnet,ZConnector,ZCloud,Internet outbound;
+    class SWP_DNS,PSC_DNS,DNS_ZONE dns;
+    class Runtime,TENANT_PROJECT tenant;
+    class VPCSC_BOUNDARY security;
+    
+    class L1 legend_int;
+    class L2 legend_out;
+    class L3 legend_dns;
+    class L4 legend_sec;
+
+    %% Link Styles
+    linkStyle 0,1,2 stroke:#1976d2,stroke-width:3px;
+    linkStyle 3 stroke:#f57c00,stroke-width:3px,stroke-dasharray: 5 5;
+    linkStyle 4,5,6 stroke:#0097a7,stroke-width:2px,stroke-dasharray: 3 3;
