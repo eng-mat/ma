@@ -1,0 +1,80 @@
+graph TD
+
+    %% Subgraph: Host Project (Shared VPC)
+    subgraph HOST_PROJECT [Host Project - Shared VPC]
+        direction TB
+        
+        subgraph DNS_ZONE [Private Cloud DNS Zone: mycompany.internal]
+            direction TB
+            SWP_Record[Central A Record:<br/>agentengine-swp-region.mycompany.internal]
+            PSC_Record[Optional A Records:<br/>Friendly names for PSC IP / Internal Services]
+        end
+        
+        SWP[Secure Web Proxy Gateway<br/>Internal IP]
+    end
+
+    %% Subgraph: Service Project
+    subgraph SERVICE_PROJECT [App Team - Service Project]
+        direction TB
+        
+        AgentResource[Vertex AI Agent Engine Resource<br/>Created via self-service]
+        PeeringConfig[[dns_peering_configs]]
+        
+        FriendlyDNSInput([Optional Input: Friendly DNS Name])
+        OutboundCheckbox([Optional Checkbox: Enable Outbound])
+        
+        AgentResource --- PeeringConfig
+        AgentResource --- FriendlyDNSInput
+        AgentResource --- OutboundCheckbox
+    end
+
+    %% Subgraph: Google Tenant Project
+    subgraph TENANT_PROJECT [Google Tenant Project]
+        Runtime[Agent Engine Runtime<br/>No direct internet egress]
+    end
+
+    %% Core DNS & Peering Flows
+    Runtime -->|Resolves domains via| PeeringConfig
+    PeeringConfig -->|Peers with| DNS_ZONE
+    
+    %% Optional / Configuration Flows
+    FriendlyDNSInput -.->|Automation creates A record| PSC_Record
+    OutboundCheckbox -.->|Pre-fills HTTPS_PROXY with| SWP_Record
+    
+    %% Outbound Resolution Flow
+    Runtime -.->|Uses SWP Hostname for outbound| SWP_Record
+    SWP_Record -->|Resolves to SWP Gateway IP| SWP
+
+    %% Legend Subgraph
+    subgraph LEGEND [Legend: Colors & Flow Types]
+        direction TB
+        
+        subgraph L_COLORS [Component Types]
+            direction LR
+            L_INT[Internal / Private]
+            L_DNS[DNS Zones & Records]
+            L_OUT[Outbound / Proxy]
+        end
+        
+        subgraph L_FLOWS [Flow Types]
+            direction LR
+            F1[ ] -->|Standard / Direct Flow| F2[ ]
+            F3[ ] -.->|Optional / Configured Flow| F4[ ]
+        end
+    end
+
+    %% Styling Definitions
+    classDef dns fill:#e0f7fa,stroke:#0097a7,stroke-width:2px;
+    classDef internal fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef outbound fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef hidden fill:none,stroke:none,color:none;
+
+    %% Apply Styles
+    class DNS_ZONE,SWP_Record,PSC_Record,PeeringConfig,L_DNS dns;
+    class AgentResource,Runtime,FriendlyDNSInput,OutboundCheckbox,L_INT internal;
+    class SWP,L_OUT outbound;
+    class F1,F2,F3,F4 hidden;
+    
+    %% Note: OutboundCheckbox is styled as internal since it's an app-team config, 
+    %% while SWP itself is styled as outbound. Let's make the outbound checkbox orange for visual mapping.
+    class OutboundCheckbox outbound;
