@@ -1,0 +1,72 @@
+graph TD
+
+    subgraph LEFT_PATH [Left Path: Internal-Only Agent Flow]
+        direction TB
+        Runtime_Int[Agent Runtime]
+        
+        subgraph VPC_SC_INT [VPC Service Controls Perimeter]
+            subgraph SVC_PROJ_INT [Service Project]
+                NetAtt[Network Attachment]
+            end
+        end
+        
+        DNS[Private DNS Zone]
+        IntSvcs[Internal Services<br/>GKE, Cloud Run, databases, on-prem]
+        
+        Runtime_Int ===|dns_peering_configs| DNS
+        Runtime_Int ===|PSC-I| NetAtt
+        NetAtt ===|Direct private traffic - no SWP| IntSvcs
+    end
+
+    subgraph RIGHT_PATH [Right Path: Outbound / Internet Agent Flow<br/>* Only when outbound checkbox selected *]
+        direction TB
+        Runtime_Out[Agent Runtime]
+        
+        subgraph VPC_SC_OUT [VPC Service Controls Perimeter]
+            subgraph SVC_PROJ_OUT [Service Project]
+                Agent_Out[Agent Engine Resource]
+            end
+        end
+        
+        SWP[SWP Gateway<br/>HTTPS_PROXY<br/>agentengine-swp-${region}.mycompany.internal:3128]
+        ZConn[Zscaler Connector]
+        ZCloud[Zscaler Cloud]
+        Internet((Internet))
+        
+        Runtime_Out -.->|Explicit proxy| SWP
+        SWP -.->|Upstream| ZConn
+        ZConn -.->|Inspection| ZCloud
+        ZCloud -.->|Egress| Internet
+    end
+
+    %% Enforce side-by-side layout
+    LEFT_PATH ~~~ RIGHT_PATH
+
+    %% Legend
+    subgraph LEGEND [Legend]
+        direction LR
+        L1[Internal Flow: Blue/Green Solid]
+        L2[Outbound Flow: Orange/Red Dashed]
+        L3[VPC-SC Perimeter: Yellow Dashed]
+    end
+
+    %% Styling Classes
+    classDef internal fill:#e3f2fd,stroke:#1976d2,stroke-width:2px;
+    classDef outbound fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef dns fill:#e0f7fa,stroke:#00838f,stroke-width:2px;
+    classDef vpcsc stroke:#fbc02d,stroke-width:3px,stroke-dasharray: 5 5,fill:none;
+    classDef runtime fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    
+    %% Apply Classes
+    class Runtime_Int,Runtime_Out runtime;
+    class NetAtt,IntSvcs,L1 internal;
+    class SWP,ZConn,ZCloud,Internet,Agent_Out,L2 outbound;
+    class DNS dns;
+    class VPC_SC_INT,VPC_SC_OUT,L3 vpcsc;
+
+    %% Link Styles (Indices match the order of defined links above)
+    %% Left Path Links: 0 (DNS), 1 (PSC-I), 2 (Internal Svcs)
+    linkStyle 0,1,2 stroke:#1976d2,stroke-width:3px;
+    
+    %% Right Path Links: 3 (SWP), 4 (ZConn), 5 (ZCloud), 6 (Internet)
+    linkStyle 3,4,5,6 stroke:#e65100,stroke-width:3px,stroke-dasharray: 5 5;
