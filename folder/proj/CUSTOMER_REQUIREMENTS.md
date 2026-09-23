@@ -49,6 +49,12 @@ Grant least privilege:
 > Rule: a service's runtime SA holds **only** what that service touches. The deploy SA can
 > *act as* the runtime SAs but is separate from them.
 
+**Service-to-service (frontend → backend):** the frontend calls the backend directly over
+the internal network (no LB in between), so grant the **frontend** SA `roles/run.invoker`
+on the **backend** Cloud Run service. Use **separate** service accounts per service
+(frontend, backend, data-connector, agent) — a shared SA is still checked for `run.invoker`
+and would let the frontend inherit the backend's data permissions (Firestore, BigQuery, secrets).
+
 ---
 
 ## 3. Cloud Run services — what to create + parameters
@@ -176,6 +182,38 @@ source-system credentials.
 | **Firewall** | allow proxy-subnet → Cloud Run; allow the connector ranges |
 | **(If Apigee for egress)** | reach it via **PSC** (no VPC peering / PSA) |
 | App subnet | provide the self-link for the LB VIP |
+
+---
+
+## Shared VPC — host vs service (already established)
+
+The VPC, subnets, proxy-only subnet, Serverless VPC connector, Cloud NAT/router, private
+DNS and firewalls already exist in the **host project** (many Cloud Run services and load
+balancers already run on it). We consume them from our **service project** — so most of §10
+is *reference + a couple of grants*, not *create*.
+
+**Host project (existing — we only need access/records):**
+
+- Network + app subnet + proxy-only subnet (`REGIONAL_MANAGED_PROXY`) — give us the **self-links**.
+- The **Serverless VPC connector** — give us its **name/id** (our Cloud Run references it).
+- Cloud NAT + static egress IP — confirm it covers our subnet (egress to Alation/SharePoint).
+- **Private DNS** zone — add the record: our custom domain → our internal LB VIP.
+- **Firewall** — allow the proxy-only subnet range → our Cloud Run backends.
+- Host-project APIs: `compute`, `dns`, `vpcaccess` (if the connector lives here), `networkconnectivity`.
+
+**Host → service IAM (the key grant):** grant `roles/compute.networkUser` on the
+**specific subnet(s)** we use to our **Cloud Run service agent**
+(`service-<svcProjNum>@serverless-robot-prod.iam.gserviceaccount.com`) and the **Google APIs
+service agent** (`<svcProjNum>@cloudservices.gserviceaccount.com`). That lets our Cloud Run
++ internal LB use the shared subnet.
+
+**Service project (we create):** Cloud Run services + data-connector, service accounts,
+Firestore, BigQuery, Secret Manager, Artifact Registry, Agent Engine, Vertex AI Search, and
+the **internal LB** resources (forwarding rule, backend service, URL map, target proxy,
+serverless NEG) — these live in the service project but **reference the host subnets**.
+Service-project APIs: `run`, `iam`, `firestore`, `bigquery`, `secretmanager`,
+`artifactregistry`, `aiplatform`, `discoveryengine`, `modelarmor`, `vpcaccess`, `iap`,
+`compute`, `cloudkms`, `logging`, `monitoring`.
 
 ---
 
