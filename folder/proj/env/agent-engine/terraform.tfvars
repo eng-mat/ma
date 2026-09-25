@@ -1,0 +1,6 @@
+project_id      = "REPLACE-cde-dev"
+region          = "us-central1"
+state_bucket    = "REPLACE-cde-tfstate"
+env             = "dev"
+display_name    = "cde-dev-l2-orchestrator"
+runtime_sa_name = "cde-dev-agent-runtime"

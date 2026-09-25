@@ -1,0 +1,6 @@
+project_id   = "REPLACE-cde-dev"
+region       = "us-central1"
+state_bucket = "REPLACE-cde-tfstate"
+env          = "dev"
+name         = "cde-dev-backend"
+ingress      = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"

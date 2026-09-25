@@ -1,0 +1,9 @@
+project_id         = "REPLACE-cde-dev"
+region             = "us-central1"
+state_bucket       = "REPLACE-cde-tfstate"
+env                = "dev"
+name_prefix        = "cde-dev-frontend"
+network            = "projects/REPLACE-shared-vpc-host/global/networks/REPLACE-vpc"
+subnetwork         = "projects/REPLACE-shared-vpc-host/regions/us-central1/subnetworks/REPLACE-app-subnet"
+ssl_certificate_id = null
+iap_members        = ["group:REPLACE-cde-app-users@REPLACE-company.com"]

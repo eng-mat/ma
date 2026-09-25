@@ -1,0 +1,3 @@
+# Placeholder requirements for the bootstrap Agent Engine deployment.
+# The agents repo (agents-cli / SDK) replaces the real app + requirements on first deploy.
+google-cloud-aiplatform[agent_engines]

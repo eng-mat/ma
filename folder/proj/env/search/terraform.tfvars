@@ -1,0 +1,5 @@
+project_id    = "REPLACE-cde-dev"
+region        = "us-central1"
+location      = "us"
+data_store_id = "cde-dev-cde"
+display_name  = "CDE dev grounding"
