@@ -120,12 +120,17 @@ variable "region" {
 }
 
 variable "staging_bucket" {
-  description = "EXISTING GCS bucket the pipeline copies the agent archive into from JFrog (not managed here)."
+  description = "Name of the staging bucket created by this configuration."
   type        = string
 }
 
-variable "agent_source_object" {
-  description = "Path (inside the bucket) of the agent source archive copied from JFrog. Must be .tar.gz."
+variable "agent_version" {
+  description = "Agent release version (from JFrog), e.g. 0.1.2. Bump to release."
+  type        = string
+}
+
+variable "agent_archive_path" {
+  description = "Local path where the pipeline downloaded the agent .tar.gz from JFrog."
   type        = string
 }
 
@@ -150,7 +155,7 @@ variable "requirements_file" {
 }
 
 variable "runtime_service_account" {
-  description = "EXISTING service account the agent runs as (email)."
+  description = "Service account the agent runs as (email)."
   type        = string
 }
 
@@ -174,7 +179,7 @@ variable "agent_env" {
 }
 
 variable "network_attachment_id" {
-  description = "EXISTING PSC network attachment id for private egress, or null for none. Fixed at engine creation."
+  description = "PSC network attachment id for private egress, or null for none. Fixed at engine creation."
   type        = string
 }
 
@@ -186,7 +191,6 @@ variable "dns_peering_configs" {
     target_network = string # VPC network NAME the zone is bound to
   }))
 }
-
 
 
 
