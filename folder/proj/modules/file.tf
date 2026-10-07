@@ -1,3 +1,48 @@
+# Agent Engine SHELL: infra owns its existence and networking; the app pipeline
+# deploys code into it by ID. Created without code, so the first apply works
+# before any archive exists.
+resource "google_vertex_ai_reasoning_engine" "agent" {
+  project      = var.project_id
+  region       = var.region
+  display_name = var.agent_engine_display_name
+  description  = "CDE agent shell. Code is deployed by the app pipeline (JFrog -> GCS -> engine)."
+
+  labels = {
+    managed-by = "terraform"
+    app        = "cde-agent"
+  }
+
+  # Private egress (PSC-I) can only be set at creation, so it lives here.
+  dynamic "spec" {
+    for_each = var.network_attachment_id == null ? [] : [1]
+    content {
+      deployment_spec {
+        psc_interface_config {
+          network_attachment = var.network_attachment_id
+
+          dynamic "dns_peering_configs" {
+            for_each = var.dns_peering_configs
+            content {
+              domain         = dns_peering_configs.value.domain
+              target_project = dns_peering_configs.value.target_project
+              target_network = dns_peering_configs.value.target_network
+            }
+          }
+        }
+      }
+    }
+  }
+
+  deletion_policy = var.agent_engine_deletion_policy
+
+  # The app pipeline sets the code (spec) on every release — never revert it.
+  lifecycle {
+    ignore_changes = [spec]
+  }
+}
+
+
+
 # Staging bucket, managed in this same configuration.
 resource "google_storage_bucket" "staging" {
   project                     = var.project_id
