@@ -1,3 +1,25 @@
+# Staging bucket, managed in this same configuration.
+resource "google_storage_bucket" "staging" {
+  project                     = var.project_id
+  name                        = var.staging_bucket
+  location                    = var.region
+  uniform_bucket_level_access = true
+  force_destroy               = false
+
+  versioning {
+    enabled = true
+  }
+}
+
+# JFrog -> GCS: the pipeline downloads the archive from JFrog to
+# var.agent_archive_path, and Terraform uploads it here. GCS holds the deployed
+# version; JFrog keeps the full version history.
+resource "google_storage_bucket_object" "agent_source" {
+  bucket = google_storage_bucket.staging.name
+  name   = "agent-engine/${var.agent_version}/agent-engine-${var.agent_version}.tar.gz"
+  source = var.agent_archive_path
+}
+
 # The bucket already exists — look it up instead of creating it.
 data "google_storage_bucket" "staging" {
   name = var.staging_bucket
@@ -20,8 +42,9 @@ resource "google_vertex_ai_reasoning_engine" "agent" {
   description  = "CDE agent deployed from a source archive (JFrog -> GCS)."
 
   labels = {
-    managed-by = "terraform"
-    app        = "cde-agent"
+    managed-by    = "terraform"
+    app           = "cde-agent"
+    agent-version = replace(var.agent_version, ".", "-") # label values can't contain dots
   }
 
   spec {
@@ -32,10 +55,11 @@ resource "google_vertex_ai_reasoning_engine" "agent" {
     # stream_query, ...). Export it once from an SDK-deployed engine.
     class_methods = file("${path.module}/class_methods.json")
 
-    # ONE archive: the .tar.gz from JFrog -> GCS. Agent Engine builds it.
+    # ONE archive: the same .tar.gz Terraform just copied to GCS. The API takes
+    # the archive bytes (base64), not a GCS path. Agent Engine builds it.
     source_code_spec {
       inline_source {
-        source_archive = data.google_storage_bucket_object_content.agent_source.content_base64
+        source_archive = filebase64(var.agent_archive_path)
       }
 
       python_spec {
@@ -75,8 +99,10 @@ resource "google_vertex_ai_reasoning_engine" "agent" {
   }
 
   deletion_policy = var.agent_engine_deletion_policy
-}
 
+  # Record the artifact in GCS before deploying it.
+  depends_on = [google_storage_bucket_object.agent_source]
+}
 
 
 
@@ -202,6 +228,37 @@ dns_peering_configs   = []
 
 
 
+
+
+project_id     = "firewall-test-458613"
+region         = "us-central1"
+staging_bucket = "firewall-test-458613-cde-agent-staging"
+
+# Release: bump agent_version; the pipeline downloads that version from JFrog
+# to agent_archive_path before running terraform. Must be a .tar.gz.
+agent_version      = "0.1.2"
+agent_archive_path = "dist/agent-engine.tar.gz"
+
+# What's inside the archive (paths relative to its root)
+entrypoint_module = "cde_agent.agent"
+entrypoint_object = "root_agent"
+requirements_file = "requirements.txt"
+python_version    = "3.12"
+
+runtime_service_account = "cde-agent-runtime@firewall-test-458613.iam.gserviceaccount.com"
+
+agent_engine_display_name    = "cde-agent"
+agent_engine_deletion_policy = "DELETE"
+
+agent_env = {
+  GCP_PROJECT     = "firewall-test-458613"
+  SEARCH_LOCATION = "global"
+  DATA_STORE_ID   = "cde-grounding-store"
+}
+
+# Private egress (PSC-I). Leave null / [] for none. Fixed at engine creation.
+network_attachment_id = null
+dns_peering_configs   = []
 
 
 
