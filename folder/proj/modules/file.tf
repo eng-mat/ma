@@ -1,3 +1,18 @@
+# The bucket already exists — look it up instead of creating it.
+data "google_storage_bucket" "staging" {
+  name = var.staging_bucket
+}
+
+# The agent source archive the pipeline copied from JFrog into GCS. Terraform
+# reads it here and sends it to Agent Engine inline (the API takes the archive
+# itself, not a GCS path). The plan fails if the object isn't there.
+data "google_storage_bucket_object_content" "agent_source" {
+  bucket = data.google_storage_bucket.staging.name
+  name   = var.agent_source_object
+}
+
+
+
 resource "google_vertex_ai_reasoning_engine" "agent" {
   project      = var.project_id
   region       = var.region
