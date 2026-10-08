@@ -1,3 +1,76 @@
+# Agent Engine, created WITH code: the API rejects deployment_spec (where PSC-I
+# lives) unless the engine also has a code source. The code source is a
+# prebuilt container image, so Agent Engine runs it as-is — no build step and
+# no Cloud Build. The app pipeline deploys new images afterwards.
+resource "google_vertex_ai_reasoning_engine" "agent" {
+  project      = var.project_id
+  region       = var.region
+  display_name = var.agent_engine_display_name
+  description  = "CDE agent. Image built in GitLab (JFrog -> Artifact Registry); new releases deployed by the app pipeline."
+
+  labels = {
+    managed-by = "terraform"
+    app        = "cde-agent"
+  }
+
+  spec {
+    agent_framework = "google-adk"
+    service_account = var.runtime_service_account
+
+    # Lets SDK clients discover the agent's methods (create_session,
+    # stream_query, ...). Export it once from an SDK-deployed engine.
+    class_methods = file("${path.module}/class_methods.json")
+
+    container_spec {
+      image_uri = var.initial_agent_image
+    }
+
+    # Private egress (PSC-I) can only be set at creation, so it lives here.
+    dynamic "deployment_spec" {
+      for_each = var.network_attachment_id == null ? [] : [1]
+      content {
+        psc_interface_config {
+          network_attachment = var.network_attachment_id
+
+          dynamic "dns_peering_configs" {
+            for_each = var.dns_peering_configs
+            content {
+              domain         = dns_peering_configs.value.domain
+              target_project = dns_peering_configs.value.target_project
+              target_network = dns_peering_configs.value.target_network
+            }
+          }
+        }
+      }
+    }
+  }
+
+  deletion_policy = var.agent_engine_deletion_policy
+
+  # The app pipeline deploys new images (spec) on every release — never revert.
+  lifecycle {
+    ignore_changes = [spec]
+  }
+
+  depends_on = [google_artifact_registry_repository_iam_member.vertex_pulls_agent_image]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Agent Engine SHELL: infra owns its existence and networking; the app pipeline
 # deploys code into it by ID. Created without code, so the first apply works
 # before any archive exists.
